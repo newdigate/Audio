@@ -546,6 +546,7 @@ span.mainfunction {color: #993300; font-weight: bolder}
 		{"type":"AudioControlCS4272","data":{"defaults":{"name":{"value":"new"}},"shortName":"cs4272","inputs":0,"outputs":0,"category":"control-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioControlWM8731","data":{"defaults":{"name":{"value":"new"}},"shortName":"wm8731","inputs":0,"outputs":0,"category":"control-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioControlWM8731master","data":{"defaults":{"name":{"value":"new"}},"shortName":"wm8731m","inputs":0,"outputs":0,"category":"control-function","color":"#E6E0F8","icon":"arrow-in.png"}},
+		{"type":"AudioControlWM8960","data":{"defaults":{"name":{"value":"new"}},"shortName":"wm8960","inputs":0,"outputs":0,"category":"control-function","color":"#E6E0F8","icon":"arrow-in.png"}},
 		{"type":"AudioControlCS42448","data":{"defaults":{"name":{"value":"new"}},"shortName":"cs42448","inputs":0,"outputs":0,"category":"control-function","color":"#E6E0F8","icon":"arrow-in.png"}}
 	]}
 </script>
@@ -5560,6 +5561,50 @@ value  frequency
 	<p></p>
 </script>
 <script type="text/x-red" data-template-name="AudioControlWM8731">
+	<div class="form-row">
+		<label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+		<input type="text" id="node-input-name" placeholder="Name">
+	</div>
+</script>
+
+<script type="text/x-red" data-help-name="AudioControlWM8960">
+	<h3>Summary</h3>
+	<div class=tooltipinfo>
+	<p>Control a WM8960 codec (for example the on-board codec of the NXP
+		MIMXRT1060-EVKB) in slave mode, where it receives all clocks from the SAI.</p>
+	</div>
+	<h3>Audio Connections</h3>
+	<p>This object has no audio inputs or outputs.  Separate i2s objects
+		are used to send and receive audio data.  I2S master mode objects
+		must be used, since this control object configures the WM8960 into
+		slave mode.
+	</p>
+	<h3>Functions</h3>
+	<p class=func><span class=keyword>enable</span>();</p>
+	<p class=desc>Turn on the WM8960 and configure it for I2S playback and record.
+	</p>
+	<p class=func><span class=keyword>disable</span>();</p>
+	<p class=desc>Mute the DAC and power the codec down.
+	</p>
+	<p class=func><span class=keyword>volume</span>(level);</p>
+	<p class=desc>Set the headphone (OUT1) output volume. Range is 0 to 1.0.
+	</p>
+	<p class=func><span class=keyword>headphoneVolume</span>(level);</p>
+	<p class=desc>Set the headphone (OUT1) output volume. Range is 0 to 1.0.
+	</p>
+	<p class=func><span class=keyword>speakerVolume</span>(level);</p>
+	<p class=desc>Set the Class-D speaker (OUT2) output volume. Range is 0 to 1.0.
+	</p>
+	<p class=func><span class=keyword>inputLevel</span>(level);</p>
+	<p class=desc>Adjust the line/mic input PGA gain.  Range is 0 to 1.0.
+	</p>
+	<p class=func><span class=keyword>inputSelect</span>(input);</p>
+	<p class=desc>Select which input to use: AUDIO_INPUT_LINEIN or AUDIO_INPUT_MIC.
+	</p>
+	<h3>Notes</h3>
+	<p></p>
+</script>
+<script type="text/x-red" data-template-name="AudioControlWM8960">
 	<div class="form-row">
 		<label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
 		<input type="text" id="node-input-name" placeholder="Name">
