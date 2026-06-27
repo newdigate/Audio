@@ -67,8 +67,13 @@ void AudioInputI2S::begin(void)
 	I2S0_TCSR |= I2S_TCSR_TE | I2S_TCSR_BCE; // TX clock enable, because sync'd to TX
 
 #elif defined(__IMXRT1062__)
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_12 = 3;  // SAI1_RX_DATA00 (from WM8960 ADC)
+	IOMUXC_SAI1_RX_DATA0_SELECT_INPUT = 1;    // AD_B1_12
+#else
 	CORE_PIN8_CONFIG  = 3;  //1:RX_DATA0
 	IOMUXC_SAI1_RX_DATA0_SELECT_INPUT = 2;
+#endif
 
 	dma.TCD->SADDR = (void *)((uint32_t)&I2S1_RDR0 + 2);
 	dma.TCD->SOFF = 0;
@@ -219,8 +224,13 @@ void AudioInputI2Sslave::begin(void)
 	dma.attachInterrupt(isr);
 
 #elif defined(__IMXRT1062__)
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_12 = 3;  // SAI1_RX_DATA00 (from WM8960 ADC)
+	IOMUXC_SAI1_RX_DATA0_SELECT_INPUT = 1;    // AD_B1_12
+#else
 	CORE_PIN8_CONFIG  = 3;  //1:RX_DATA0
 	IOMUXC_SAI1_RX_DATA0_SELECT_INPUT = 2;
+#endif
 
 	dma.TCD->SADDR = (void *)((uint32_t)&I2S1_RDR0 + 2);
 	dma.TCD->SOFF = 0;

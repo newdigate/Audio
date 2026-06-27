@@ -80,7 +80,11 @@ void AudioOutputI2S::begin(void)
 	I2S0_TCSR = I2S_TCSR_TE | I2S_TCSR_BCE | I2S_TCSR_FRDE;
 
 #elif defined(__IMXRT1062__)
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_13 = 3;  // SAI1_TX_DATA00 (to WM8960 DAC)
+#else
 	CORE_PIN7_CONFIG  = 3;  //1:TX_DATA0
+#endif
 	dma.TCD->SADDR = i2s_tx_buffer;
 	dma.TCD->SOFF = 2;
 	dma.TCD->ATTR = DMA_TCD_ATTR_SSIZE(1) | DMA_TCD_ATTR_DSIZE(1);
@@ -415,8 +419,13 @@ void AudioOutputI2S::config_i2s(bool only_bclk)
 	{
 	  if (!only_bclk) // if previous transmitter/receiver only activated BCLK, activate the other clock pins now
 	  {
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_09 = 3; // SAI1_MCLK
+	    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_15 = 3; // SAI1_TX_SYNC (LRCLK)
+#else
 	    CORE_PIN23_CONFIG = 3;  //1:MCLK
 	    CORE_PIN20_CONFIG = 3;  //1:RX_SYNC (LRCLK)
+#endif
 	  }
 	  return ;
 	}
@@ -447,13 +456,27 @@ void AudioOutputI2S::config_i2s(bool only_bclk)
 
 	if (!only_bclk)
 	{
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	  // EVKB: WM8960 is on SAI1's TX clock domain (MCLK=AD_B1_09, TX_SYNC=AD_B1_15)
+	  IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_09 = 3; // SAI1_MCLK
+	  IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_15 = 3; // SAI1_TX_SYNC (LRCLK)
+#else
 	  CORE_PIN23_CONFIG = 3;  //1:MCLK
 	  CORE_PIN20_CONFIG = 3;  //1:RX_SYNC  (LRCLK)
+#endif
 	}
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_14 = 3; // SAI1_TX_BCLK
+	// EVKB: the codec listens on TX_BCLK/TX_SYNC, so TX is the clock master and
+	// RX is synchronous to TX -- the reverse of the Teensy (RX-master) wiring.
+	int rsync = 1;
+	int tsync = 0;
+#else
 	CORE_PIN21_CONFIG = 3;  //1:RX_BCLK
 
 	int rsync = 0;
 	int tsync = 1;
+#endif
 
 	I2S1_TMR = 0;
 	//I2S1_TCSR = (1<<25); //Reset
@@ -511,7 +534,11 @@ void AudioOutputI2Sslave::begin(void)
 	I2S0_TCSR = I2S_TCSR_TE | I2S_TCSR_BCE | I2S_TCSR_FRDE;
 
 #elif defined(__IMXRT1062__)
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_13 = 3;  // SAI1_TX_DATA00 (to WM8960 DAC)
+#else
 	CORE_PIN7_CONFIG  = 3;  //1:TX_DATA0
+#endif
 	dma.TCD->SADDR = i2s_tx_buffer;
 	dma.TCD->SOFF = 2;
 	dma.TCD->ATTR = DMA_TCD_ATTR_SSIZE(1) | DMA_TCD_ATTR_DSIZE(1);

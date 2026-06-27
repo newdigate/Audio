@@ -77,7 +77,9 @@ void AudioOutputI2SOct::begin(void)
 	AudioOutputI2S::config_i2s();
 	I2S1_TCR3 = I2S_TCR3_TCE_4CH;
 	CORE_PIN7_CONFIG  = 3;
+	#if !defined(ARDUINO_MIMXRT1060_EVKB) /* pin not on EVKB */
 	CORE_PIN32_CONFIG = 3;
+	#endif
 	CORE_PIN6_CONFIG  = 3;
 	CORE_PIN9_CONFIG  = 3;
 	dma.TCD->SADDR = i2s_tx_buffer;

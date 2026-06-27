@@ -74,11 +74,15 @@ void AudioOutputI2SHex::begin(void)
 	switch (pinoffset) {
 	  case 0:
 		CORE_PIN7_CONFIG  = 3;
+		#if !defined(ARDUINO_MIMXRT1060_EVKB) /* pin not on EVKB */
 		CORE_PIN32_CONFIG = 3;
+		#endif
 		CORE_PIN9_CONFIG  = 3;
 		break;
 	  case 1:
+		#if !defined(ARDUINO_MIMXRT1060_EVKB) /* pin not on EVKB */
 		CORE_PIN32_CONFIG = 3;
+		#endif
 		CORE_PIN9_CONFIG  = 3;
 		CORE_PIN6_CONFIG  = 3;
 	}

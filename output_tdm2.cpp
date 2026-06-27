@@ -216,7 +216,9 @@ void AudioOutputTDM2::config_tdm(void)
 		| I2S_RCR4_FSE | I2S_RCR4_FSD;
 	I2S2_RCR5 = I2S_RCR5_WNW(31) | I2S_RCR5_W0W(31) | I2S_RCR5_FBT(31);
 
+	#if !defined(ARDUINO_MIMXRT1060_EVKB) /* pin not on EVKB */
 	CORE_PIN33_CONFIG = 2;  //2:MCLK
+	#endif
 	CORE_PIN4_CONFIG  = 2;  //2:TX_BCLK
 	CORE_PIN3_CONFIG  = 2;  //2:TX_SYNC
 }

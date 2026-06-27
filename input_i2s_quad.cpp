@@ -52,7 +52,9 @@ void AudioInputI2SQuad::begin(void)
 #if defined(__MK20DX256__)
 	CORE_PIN30_CONFIG = PORT_PCR_MUX(4); // pin 30, PTC11, I2S0_RXD1
 #elif defined(__MK64FX512__) || defined(__MK66FX1M0__)
+	#if !defined(ARDUINO_MIMXRT1060_EVKB) /* pin not on EVKB */
 	CORE_PIN38_CONFIG = PORT_PCR_MUX(4); // pin 38, PTC11, I2S0_RXD1
+	#endif
 #endif
 
 #if defined(KINETISK)
@@ -95,7 +97,9 @@ void AudioInputI2SQuad::begin(void)
 		break;
 	  case 2:
 		CORE_PIN9_CONFIG = 3;
+		#if !defined(ARDUINO_MIMXRT1060_EVKB) /* pin not on EVKB */
 		CORE_PIN32_CONFIG = 3;
+		#endif
 		IOMUXC_SAI1_RX_DATA2_SELECT_INPUT = 1; // GPIO_B0_11_ALT3, pg 874
 		IOMUXC_SAI1_RX_DATA3_SELECT_INPUT = 1; // GPIO_B0_12_ALT3, pg 875
 		break;
