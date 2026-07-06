@@ -89,6 +89,50 @@ void AudioInputI2S::begin(void)
 	dma.triggerAtHardwareEvent(DMAMUX_SOURCE_SAI1_RX);
 
 	I2S1_RCSR = I2S_RCSR_RE | I2S_RCSR_BCE | I2S_RCSR_FRDE | I2S_RCSR_FR;
+
+#elif defined(__IMXRT1176__)
+	// SAI1_RXD0 = GPIO_AD_20 (ALT0); RX data is an input, needs a daisy
+	// select (mirrors the core's HW-verified SAI RX pin setup, I2S.cpp).
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_20 = 0;
+	IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_20 = 0x02;
+	IOMUXC_SAI1_RX_DATA0_SELECT_INPUT = 0;
+
+	dma.TCD->SADDR = (void *)((uint32_t)&SAI1_RDR0 + 2);
+	dma.TCD->SOFF = 0;
+	// SSIZE=1/DSIZE=1 (16-bit/16-bit, as used by every other target above).
+	// imxrt1176.h has no DMA_TCD_ATTR_SSIZE/DSIZE macros (confirmed absent, not
+	// just differently spelled; also absent from the header generator
+	// tools/gen_imxrt1176_h.py), so use DMAChannel.h's own ATTR_SRC/ATTR_DST
+	// union fields (the idiom its own methods use; bit-identical to 0x0101).
+	dma.TCD->ATTR_SRC = 1;   // 16-bit source (SAI1_RDR0)
+	dma.TCD->ATTR_DST = 1;   // 16-bit dest (i2s_rx_buffer)
+	dma.TCD->NBYTES_MLNO = 2;
+	dma.TCD->SLAST = 0;
+	dma.TCD->DADDR = i2s_rx_buffer;
+	dma.TCD->DOFF = 2;
+	dma.TCD->CITER_ELINKNO = sizeof(i2s_rx_buffer) / 2;
+	dma.TCD->DLASTSGA = -sizeof(i2s_rx_buffer);
+	dma.TCD->BITER_ELINKNO = sizeof(i2s_rx_buffer) / 2;
+	dma.TCD->CSR = DMA_TCD_CSR_INTHALF | DMA_TCD_CSR_INTMAJOR;
+	dma.triggerAtHardwareEvent(DMAMUX_SOURCE_SAI1_RX);
+
+	// Configure SAI1 RX synchronous to TX BEFORE enabling it. Task 1's
+	// config_i2s() set up TX (TCRn) and left RX (RCRn) for this node. These are
+	// the core's HW-verified values verbatim (cores/imxrt1176 I2S.cpp
+	// configureSAI(), lines 72-79): RX shares TX's BCLK/FS, 16-bit stereo.
+	// KEY: RCR2_SYNC(1) makes RX synchronous to the transmitter; RCR4 has NO
+	// FSD (RX consumes TX's frame sync) and no FCONT.
+	SAI1_RCSR = SAI_RCSR_SR; SAI1_RCSR = 0u;     // RX soft reset
+	SAI1_RCSR = SAI_RCSR_FR; SAI1_RCSR = 0u;     // RX FIFO reset
+	SAI1_RMR  = 0u;
+	SAI1_RCR1 = 0u;                              // FIFO watermark 0 -> FRF at >=1 sample
+	SAI1_RCR2 = SAI_RCR2_SYNC(1);               // synchronous to transmitter
+	SAI1_RCR3 = SAI_RCR3_RCE(1);                // enable channel 0
+	SAI1_RCR4 = SAI_RCR4_FRSZ(1) | SAI_RCR4_SYWD(15) | SAI_RCR4_MF |
+		    SAI_RCR4_FSE | SAI_RCR4_FSP;    // no FSD (uses TX sync), no FCONT
+	SAI1_RCR5 = SAI_RCR5_WNW(15) | SAI_RCR5_W0W(15) | SAI_RCR5_FBT(15);
+
+	SAI1_RCSR = SAI_RCSR_RE | SAI_RCSR_BCE | SAI_RCSR_FRDE | SAI_RCSR_FR;
 #endif
 	update_responsibility = update_setup();
 	dma.enable();
@@ -102,7 +146,7 @@ void AudioInputI2S::isr(void)
 	int16_t *dest_left, *dest_right;
 	audio_block_t *left, *right;
 
-#if defined(KINETISK) || defined(__IMXRT1062__)
+#if defined(KINETISK) || defined(__IMXRT1062__) || defined(__IMXRT1176__)
 	daddr = (uint32_t)(dma.TCD->DADDR);
 	dma.clearInterrupt();
 	//Serial.println("isr");
