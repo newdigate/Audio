@@ -97,7 +97,13 @@ void AudioInputI2S::begin(void)
 	IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_20 = 0x02;
 	IOMUXC_SAI1_RX_DATA0_SELECT_INPUT = 0;
 
-	dma.TCD->SADDR = (void *)((uint32_t)&SAI1_RDR0 + 2);
+	// Read the LOWER 16 bits of RDR0 (offset +0), NOT +2. The Teensy-1062
+	// reference uses +2 because its SAI left-packs the 16-bit sample into the
+	// upper half; our core's configureSAI (FBT=15) right-packs it into the lower
+	// half -- proven by the HW-verified core RX path (I2S.cpp: i2s_rx_dma.source(
+	// *(volatile uint16_t *)&SAI1_RDR0), an offset-+0 read). Reading +2 captured
+	// the always-zero upper half -> peak stuck at exactly 0.0000 on silicon.
+	dma.TCD->SADDR = (void *)((uint32_t)&SAI1_RDR0);
 	dma.TCD->SOFF = 0;
 	// SSIZE=1/DSIZE=1 (16-bit/16-bit, as used by every other target above).
 	// imxrt1176.h has no DMA_TCD_ATTR_SSIZE/DSIZE macros (confirmed absent, not
@@ -133,6 +139,14 @@ void AudioInputI2S::begin(void)
 	SAI1_RCR5 = SAI_RCR5_WNW(15) | SAI_RCR5_W0W(15) | SAI_RCR5_FBT(15);
 
 	SAI1_RCSR = SAI_RCSR_RE | SAI_RCSR_BCE | SAI_RCSR_FRDE | SAI_RCSR_FR;
+	// Enable the transmitter's bit-clock + frame-sync generator. RX is synchronous
+	// to TX (RCR2_SYNC(1)), so with TX disabled there is NO BCLK/FS at all: the
+	// WM8962 never gets clocked, no mic data shifts into the RX FIFO, no DMA fires,
+	// no audio blocks flow. FCONT=1 (config_i2s TCR4, bit 28) keeps the clock
+	// running through the perpetual TX-FIFO underrun (this node never transmits).
+	// Mirrors the Teensy reference: "I2S_TCSR_TE | I2S_TCSR_BCE; // TX clock enable,
+	// because sync'd to TX". (QEMU's injector-paced SAI can't surface this; HW did.)
+	SAI1_TCSR = SAI_TCSR_TE | SAI_TCSR_BCE;
 #endif
 	update_responsibility = update_setup();
 	dma.enable();
