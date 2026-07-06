@@ -29,7 +29,13 @@
 
 #include <Arduino.h>     // github.com/PaulStoffregen/cores/blob/master/teensy4/Arduino.h
 #include <AudioStream.h> // github.com/PaulStoffregen/cores/blob/master/teensy4/AudioStream.h
-#include <arm_math.h>    // github.com/PaulStoffregen/cores/blob/master/teensy4/arm_math.h
+// NOTE: upstream/platformio's synth_sine.h includes <arm_math.h> here, but
+// nothing in this file or synth_sine.cpp uses any arm_math symbol (the sine
+// math is all multiply_32x32_rshift32* from utility/dspinst.h). teensy4's
+// core happens to ship a full arm_math.h so the unused include is harmless
+// there; the from-scratch imxrt1176 core does not carry one, so the dead
+// include just fails to resolve. Dropped for RT1176 (fork-only change, see
+// ~/Development/rt1170 audiooutput_i2s_test Task 1).
 
 // TODO: investigate making a high resolution sine wave
 // using Taylor series expansion.
