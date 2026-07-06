@@ -127,7 +127,7 @@ void AudioOutputI2S::begin(void)
 
 void AudioOutputI2S::isr(void)
 {
-#if defined(KINETISK) || defined(__IMXRT1062__)
+#if defined(KINETISK) || defined(__IMXRT1062__) || defined(__IMXRT1176__)
 	int16_t *dest;
 	audio_block_t *blockL, *blockR;
 	uint32_t saddr, offsetL, offsetR;
