@@ -104,6 +104,39 @@ void AudioOutputI2S::begin(void)
 	//attachInterruptVector(IRQ_SAI1, isr_fifo_underrun);
 	//NVIC_SET_PRIORITY(IRQ_SAI1, 240); // lowest priority
 	//NVIC_ENABLE_IRQ(IRQ_SAI1);
+
+#elif defined(__IMXRT1176__)
+	// SAI1 TX-DATA00 pin (GPIO_AD_21) mux is already set by config_i2s() above,
+	// so this branch is just the TX DMA + enable. Mirrors the core's HW-verified
+	// I2SClass::beginDMA() (I2S.cpp): SADDR advances through i2s_tx_buffer, DADDR
+	// is the fixed FIFO register, TCSR = TE|BCE|FRDE.
+	dma.TCD->SADDR = i2s_tx_buffer;
+	dma.TCD->SOFF = 2;                    // advance the source (buffer) by 16 bits
+	// imxrt1176.h has no DMA_TCD_ATTR_SSIZE/DSIZE macros (confirmed absent); use
+	// DMAChannel.h's ATTR_SRC/ATTR_DST union fields (bit-identical to 0x0101),
+	// the same idiom AudioInputI2S uses.
+	dma.TCD->ATTR_SRC = 1;                // 16-bit source (i2s_tx_buffer)
+	dma.TCD->ATTR_DST = 1;                // 16-bit dest (SAI1_TDR0)
+	dma.TCD->NBYTES_MLNO = 2;
+	dma.TCD->SLAST = -sizeof(i2s_tx_buffer);   // wrap the source each major loop
+	dma.TCD->DOFF = 0;                    // dest is a fixed FIFO register
+	dma.TCD->CITER_ELINKNO = sizeof(i2s_tx_buffer) / 2;
+	dma.TCD->DLASTSGA = 0;                // dest fixed, no adjustment
+	dma.TCD->BITER_ELINKNO = sizeof(i2s_tx_buffer) / 2;
+	dma.TCD->CSR = DMA_TCD_CSR_INTHALF | DMA_TCD_CSR_INTMAJOR;
+	// Write the LOWER 16 bits of TDR0 (offset +0), NOT +2. The Teensy-1062
+	// reference uses +2 (its SAI left-packs); our core's configureSAI (FBT=15)
+	// right-packs into the lower half -- proven by the HW-verified core TX path
+	// (I2S.cpp: i2s_dma.destination(*(volatile uint16_t *)&SAI1_TDR0), +0). Using
+	// +2 would drop every sample into the ignored upper half -> silence on J101.
+	// (This is the TX analog of the AudioInputI2S RDR0 +0 fix.)
+	dma.TCD->DADDR = (void *)((uint32_t)&SAI1_TDR0);
+	dma.triggerAtHardwareEvent(DMAMUX_SOURCE_SAI1_TX);
+	dma.enable();
+	// Enable the transmitter: TX + bit clock + FIFO DMA request. config_i2s()
+	// set up TCRn and left TCSR=0; FRDE makes the SAI raise the TX DMA request as
+	// the FIFO drains. Matches the core's beginDMA (hw->tcsr |= TE|BCE|FRDE).
+	SAI1_TCSR = SAI_TCSR_TE | SAI_TCSR_BCE | SAI_TCSR_FRDE;
 #endif
 	update_responsibility = update_setup();
 	dma.attachInterrupt(isr);
