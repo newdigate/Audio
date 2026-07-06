@@ -498,6 +498,107 @@ void AudioOutputI2S::config_i2s(bool only_bclk)
 		    | I2S_RCR4_FSE | I2S_RCR4_FSP | I2S_RCR4_FSD;
 	I2S1_RCR5 = I2S_RCR5_WNW((32-1)) | I2S_RCR5_W0W((32-1)) | I2S_RCR5_FBT((32-1));
 
+#elif defined(__IMXRT1176__)
+
+	// ---------------------------------------------------------------------
+	// MIMXRT1176-EVKB SAI1 + Audio-PLL, configured for 44.1 kHz.
+	//
+	// This is a compute-the-constants port of the core's HW-verified 48 kHz
+	// template (cores/imxrt1176 I2S.cpp: sai1_audio_pll_init() + configureSAI()).
+	// The mechanism -- the ANATOP AI indirect audio-PLL programming, the clock
+	// root mux, the LPCG ungate, the GPR0 MCLK direction, and the SAI TCR
+	// register layout -- is unchanged; ONLY the PLL fractional divider and the
+	// resulting clock rate are recomputed for 44.1 kHz.
+	//
+	// Derivation (24 MHz OSC reference):
+	//   Target MCLK = 44100 * 512 = 22.5792 MHz.  Keeping MCLK = fs*512 lets the
+	//   SAI TCR2/TCR4/TCR5 values stay byte-identical to the core's 48 kHz set
+	//   (only the feeding clock changes).
+	//   Clock root 64 = Audio PLL (mux 4) / 16, so the PLL post-div output must be
+	//   22.5792 MHz * 16 = 361.2672 MHz, hence VCO (pre postDiv-by-2) =
+	//   722.5344 MHz.  VCO/24MHz = 30.1056 = loopDiv + NUM/DENOM
+	//     -> loopDiv = 30, NUM = 1056, DENOM = 10000  (0.1056 exactly).
+	//   Check: 24 * (30 + 1056/10000) = 722.5344 MHz; /2 = 361.2672 MHz;
+	//          /16 = 22.5792 MHz = 44100 * 512.  Zero error.
+	//   Frame-sync: BCLK = MCLK / (2*(TCR2_DIV+1)) = 22.5792M / 16 = 1.41120 MHz;
+	//               2 words/frame * 16 bits = 32 bit-clocks/frame;
+	//               1.41120 MHz / 32 = 44.1 kHz.  (== MCLK/512.)
+	// ---------------------------------------------------------------------
+
+	// One ANATOP AI indirect write to the Audio-PLL register file. Mirrors the
+	// core's file-static ai_write() (SDK ANATOP_AI_Write / QEMU imxrt_anadig:
+	// toggle bit8 -> done bit9). Replicated here because the core's helper is
+	// file-static in I2S.cpp.
+	auto ai_write_audio = [](uint8_t aiAddr, uint32_t wdata) {
+		uint32_t pre = ANADIG_MISC_AI_CTRL_AUDIO & ANADIG_AI_TOGGLE_DONE;
+		ANADIG_MISC_AI_CTRL_AUDIO &= ~ANADIG_AI_RWB;                          // write mode
+		ANADIG_MISC_AI_CTRL_AUDIO = (ANADIG_MISC_AI_CTRL_AUDIO & ~0xFFu) | aiAddr;
+		ANADIG_MISC_AI_WDATA_AUDIO = wdata;
+		ANADIG_MISC_AI_CTRL_AUDIO ^= ANADIG_AI_TOGGLE;                        // request
+		while ((ANADIG_MISC_AI_CTRL_AUDIO & ANADIG_AI_TOGGLE_DONE) == pre) { }
+	};
+
+	// Audio-PLL bring-up. AI sub-addresses (fsl_anatop_ai.h kAI_PLLAUDIO_*):
+	// CTRL0=0x00, CTRL0_SET=0x04, CTRL0_CLR=0x08, CTRL2(num)=0x20, CTRL3(denom)=0x30.
+	// CTRL0 bits: loopDiv[6:0], HOLD_RING_OFF b13, POWER_UP b14, ENABLE b15,
+	// BYPASS b16, PLL_REG_EN b22, POST_DIV[27:25].
+	ai_write_audio(0x04, (1u << 16));               // CTRL0_SET: BYPASS
+	ANADIG_PLL_AUDIO_CTRL |= ANADIG_PLL_AUDIO_CTRL_ENABLE_CLK;
+	ai_write_audio(0x30, 10000);                    // denominator  (44.1k: DENOM=10000)
+	ai_write_audio(0x20, 1056);                     // numerator    (44.1k: NUM=1056)
+	ai_write_audio(0x08, 0x7Fu);                    // CTRL0_CLR: clear loopDiv field
+	ai_write_audio(0x04, 30u & 0x7Fu);              // CTRL0_SET: loopDiv=30  (44.1k)
+	ai_write_audio(0x08, 0x7u << 25);               // CTRL0_CLR: clear postDiv field
+	ai_write_audio(0x04, (1u << 25));               // CTRL0_SET: postDiv=1 (divide by 2)
+	ai_write_audio(0x04, (1u << 22));               // CTRL0_SET: PLL_REG_EN
+	for (volatile uint32_t d = 20000; d; d--) { }   // >=100us settle
+	ai_write_audio(0x04, (1u << 14) | (1u << 13));  // CTRL0_SET: POWER_UP | HOLD_RING_OFF
+	for (volatile uint32_t d = 45000; d; d--) { }   // >=225us
+	ai_write_audio(0x08, (1u << 13));               // CTRL0_CLR: HOLD_RING_OFF
+	{
+		uint32_t guard = 2000000;
+		while (!(ANADIG_PLL_AUDIO_CTRL & ANADIG_PLL_AUDIO_CTRL_STABLE) && guard--) { }
+	}
+	ai_write_audio(0x04, (1u << 15));               // CTRL0_SET: ENABLE (clk out)
+	ANADIG_PLL_AUDIO_CTRL &= ~ANADIG_PLL_AUDIO_CTRL_GATE;  // ungate
+	ai_write_audio(0x08, (1u << 16));               // CTRL0_CLR: clear BYPASS
+
+	// SAI1 clock root 64: mux 4 (Audio PLL), div = 16 (value 15).
+	// 361.2672 MHz / 16 = 22.5792 MHz MCLK = 44100 * 512.
+	CCM_CLOCK_ROOT64_CONTROL = (4u << 8) | (15u << 0);
+	CCM_LPCG123_DIRECT = 1u;                        // ungate SAI1
+
+	// Pin mux (ALT0) + pad ctl 0x02; SION(0x10) on the clock pins; MCLK as an
+	// output via GPR0. (EVKB SAI1: MCLK=AD_17, TX_DATA00=AD_21, TX_BCLK=AD_22,
+	// TX_SYNC=AD_23.)  RX data pin (AD_20) is left for AudioInputI2S (Task 2).
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_17 = 0x10u;       // MCLK
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_21 = 0u;          // TX_DATA00 (data pin, no SION)
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_22 = 0x10u;       // TX_BCLK
+	IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_23 = 0x10u;       // TX_SYNC
+	IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_17 = 0x02u;
+	IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_21 = 0x02u;
+	IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_22 = 0x02u;
+	IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_23 = 0x02u;
+	IOMUXC_GPR_GPR0 |= IOMUXC_GPR_GPR0_SAI1_MCLK_DIR;
+
+	// Reset TX, then configure I2S 16-bit stereo, TX = clock master.
+	// TCR2/TCR3/TCR4/TCR5 values are copied verbatim from the core's HW-verified
+	// configureSAI() -- only the feeding clock rate differs from 48 kHz.
+	SAI1_TCSR = SAI_TCSR_SR; SAI1_TCSR = 0u;
+	SAI1_TCSR = SAI_TCSR_FR; SAI1_TCSR = 0u;
+	SAI1_TMR  = 0u;
+	SAI1_TCR1 = 16u;                                // FIFO watermark
+	SAI1_TCR2 = SAI_TCR2_MSEL(1) | SAI_TCR2_BCD | SAI_TCR2_BCP | SAI_TCR2_DIV(7);
+	SAI1_TCR3 = SAI_TCR3_TCE(1);                    // enable channel 0
+	SAI1_TCR4 = SAI_TCR4_FRSZ(1) | SAI_TCR4_SYWD(15) | SAI_TCR4_MF |
+		    SAI_TCR4_FSD | SAI_TCR4_FSE | SAI_TCR4_FSP |
+		    (1u << 28);   // FCONT: keep the bit clock running through a FIFO
+				  // underrun (a polled/starting TX briefly underruns;
+				  // without FCONT the SAI halts and never recovers).
+	SAI1_TCR5 = SAI_TCR5_WNW(15) | SAI_TCR5_W0W(15) | SAI_TCR5_FBT(15);
+	// RX (SAI1_RCRn) is configured by AudioInputI2S (Task 2): synchronous to TX,
+	// sharing this BCLK/FS.
+
 #endif
 }
 

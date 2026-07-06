@@ -52,6 +52,9 @@ public:
 #endif
 protected:
 	AudioOutputI2S(int dummy): AudioStream(2, inputQueueArray) {} // to be used only inside AudioOutputI2Sslave !!
+	// config_i2s: per-target SAI setup. On __IMXRT1176__ this brings up the
+	// Audio PLL (ANATOP AI) + SAI1 clock root for 44.1 kHz; the only_bclk arg is
+	// unused on that target (kept for signature compatibility with the others).
 	static void config_i2s(bool only_bclk = false);
 	static audio_block_t *block_left_1st;
 	static audio_block_t *block_right_1st;
