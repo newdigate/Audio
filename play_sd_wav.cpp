@@ -201,7 +201,12 @@ cleanup:
 				block_left->data[i] = 0;
 			}
 			transmit(block_left, 0);
-			if (state < 8 && (state & 1) == 0) {
+			if (block_right == NULL) {
+				// Mono: duplicate the (zero-padded) final block to the right
+				// output.  Test block_right (NULL == mono, set at allocation
+				// time) rather than `state`: the EOF path sets state=STATE_STOP
+				// before reaching cleanup, so the old `state < 8` test wrongly
+				// skipped this dup on the last partial block of a mono file.
 				transmit(block_left, 1);
 			}
 		}
