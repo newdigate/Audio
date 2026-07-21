@@ -26,7 +26,8 @@
 
 #include <Arduino.h>
 #include "synth_waveform.h"
-#include "arm_math.h"
+// NOTE: upstream includes "arm_math.h" here too; no arm_ symbols are used
+// in this file -- stripped alongside the synth_waveform.h include.
 #include "utility/dspinst.h"
 
 
