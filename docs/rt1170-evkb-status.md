@@ -7,6 +7,10 @@ completion IRQs are CM7-domain).
 Audited 2026-07-20 by sweeping every source file's platform guards and hardware
 register usage. Three guard families decide a file's fate:
 
+> **Changelog 2026-07-21**: CMSIS-DSP landed in the evkb manifest
+> (`import_evkb_cmsis_dsp()`) — the 🔵 tier is retired; `filter_fir` and
+> `analyze_fft256` are now HW-verified via the evkb `filter_fir_test` gate.
+
 | Guard style | Effect on RT1176 |
 |---|---|
 | `#if defined(__ARM_ARCH_7EM__)` (architecture) | **Works as-is** — the CM7 defines it, full DSP path taken |
@@ -17,7 +21,7 @@ Legend:
 ✅ verified in an evkb gate (QEMU + real-hardware) ·
 🟢 expected-compatible, not yet exercised on 1176 ·
 🟡 needs a small guard fix (add `__IMXRT1176__` / switch to `__ARM_ARCH_7EM__`) ·
-🔵 blocked on CMSIS-DSP (`arm_math`) in the core ·
+🔵 (retired 2026-07-21 — CMSIS-DSP landed in the evkb manifest; formerly: blocked on arm_math) ·
 🟠 needs an RT1062→RT1176 hardware port ·
 🟣 needs external hardware (and a port where noted) ·
 ❌ N/A — Kinetis-only peripheral, no RT1176 equivalent of the same shape
@@ -26,8 +30,9 @@ Legend:
 
 `input_i2s` (SAI1 RX, mic on WM8962 **right** channel), `output_i2s` (SAI1 TX
 DMA), `control_wm8962`, `play_sd_wav`, `synth_sine`, `analyze_peak`,
-`memcpy_audio.S`, `spi_interrupt`, `data_waveforms.c`. `AudioStream` itself
-lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
+`filter_fir`, `analyze_fft256`, `memcpy_audio.S`, `spi_interrupt`,
+`data_waveforms.c`. `AudioStream` itself lives in the core (dispatch on spare
+`IRQ_SOFTWARE=44`, 44.1 kHz).
 
 ## Synths
 
@@ -36,7 +41,7 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | synth_sine | ✅ | in gates (fork already stripped its unused `arm_math` include) |
 | synth_waveform | 🟢 | arch-guarded + bandlimit tables; `.h` has an unused `arm_math` include to strip |
 | synth_dc, synth_pinknoise, synth_whitenoise, synth_pwm | 🟢 | arch/`KINETISL`-split — full path taken on CM7 |
-| synth_tonesweep | 🔵 | calls `arm_sin_q31` |
+| synth_tonesweep | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_sin_q31`) |
 | synth_karplusstrong | 🟡 | `KINETISK \|\| __IMXRT1062__` around the whole `update()` — **silently dead** today |
 | synth_simple_drum | 🟡 | same silent-dead pattern |
 | synth_wavetable | 🟡 | same silent-dead pattern |
@@ -47,7 +52,7 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 |---|---|---|
 | bitcrusher, chorus, combine, envelope, fade, granular, midside, multiply, rectifier, reverb, freeverb, wavefolder, waveshaper | 🟢 | pure DSP, arch-guarded or unguarded |
 | effect_delay | 🟡 | works, but `DELAY_QUEUE_SIZE` falls to the small `#else` — add 1176 to the `.h` guard for the 4-second buffer |
-| effect_flange | 🔵 | calls `arm_sin_q15` |
+| effect_flange | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_sin_q15`) |
 | effect_delay_ext | 🟣 | code is portable; needs an external SPI RAM (23LC1024-class) on the header SPI — untested |
 
 ## Filters
@@ -55,8 +60,8 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | Component | Status | Notes |
 |---|---|---|
 | filter_biquad, filter_variable | 🟢 | arch-guarded |
-| filter_fir | 🔵 | `arm_fir_fast_q15` |
-| filter_ladder | 🔵 | `arm_fir_{decimate,interpolate}_*_f32` (CM7 FPU is fine) |
+| filter_fir | ✅ | CMSIS-DSP manifest lib in evkb; HW-verified via evkb `filter_fir_test` (boxcar known-answer) |
+| filter_ladder | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_fir_{decimate,interpolate}_*_f32`, CM7 FPU is fine) |
 
 ## Analyze
 
@@ -66,7 +71,8 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | analyze_rms, analyze_tonedetect | 🟢 | need `utility/sqrt_integer.c` compiled alongside |
 | analyze_print | 🟢 | |
 | analyze_notefreq | 🟢 | `arm_math` include is unused (no calls) — strip it like synth_sine did |
-| analyze_fft256, analyze_fft1024 | 🔵 | `arm_cfft_radix4_q15` + q15 twiddle tables |
+| analyze_fft256 | ✅ | HW-verified via evkb `filter_fir_test` |
+| analyze_fft1024 | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_cfft_radix4_q15` + q15 twiddle tables) |
 
 ## Mixer / queues / players
 
@@ -118,15 +124,19 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | utility/sqrt_integer.{c,h} | 🟢 | needed by rms/tonedetect |
 | utility/imxrt_hw.cpp (`set_audioClock`) | 🟠 | RT1062 CCM code; the 1176 ports do their own clocking — port or replace when SAI2/SPDIF/MQS work starts |
 | utility/pdb.h | ❌ | Kinetis PDB |
-| Audio.h (master include) | 🟡🔵 | **not currently compilable on 1176** — its 81 includes pull `arm_math.h` (absent from the core). Gates cherry-pick individual headers instead |
+| Audio.h (master include) | 🟡 | **not currently compilable on 1176** — the guard sweep across its 81 includes is still pending. Gates cherry-pick individual headers instead |
 
 ## Roadmap
 
 **Phase A — no hardware needed, biggest surface unlock**
-1. **CMSIS-DSP into `cores/imxrt1176`**: `arm_math.h`, the q15/q31 tables, and
-   the CM7 DSP lib (CMSIS is Apache-2.0 — passes the license firewall).
-   Unlocks both FFTs, filter_fir, filter_ladder, effect_flange,
-   synth_tonesweep (all the 🔵 rows).
+1. **CMSIS-DSP — DONE 2026-07-21**: landed as a pinned manifest library in
+   evkb (`import_evkb_cmsis_dsp()` in `evkb.cmake`, CMSIS-DSP v1.17.1 +
+   CMSIS_6, Apache-2.0 — passes the license firewall) rather than inside
+   `cores/imxrt1176`. Proven by two HW-verified gates:
+   `examples/framework/arm_math_test` (known-answer FFT/FIR/sin) and
+   `examples/audio/filter_fir_test` (sine → AudioFilterFIR boxcar →
+   AudioAnalyzeFFT256 + peak, zero Audio source changes). The former 🔵 rows
+   are unblocked (filter_fir + analyze_fft256 already ✅).
 2. **Guard sweep** (the 🟡 rows): add `__IMXRT1176__` — or better, switch the
    chip lists to `__ARM_ARCH_7EM__` — in synth_karplusstrong, synth_simple_drum,
    synth_wavetable, effect_delay.h, play_queue.h, record_queue.h. Strip the
