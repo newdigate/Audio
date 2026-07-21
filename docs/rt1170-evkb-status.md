@@ -10,6 +10,9 @@ register usage. Three guard families decide a file's fate:
 > **Changelog 2026-07-21**: CMSIS-DSP landed in the evkb manifest
 > (`import_evkb_cmsis_dsp()`) — the 🔵 tier is retired; `filter_fir` and
 > `analyze_fft256` are now HW-verified via the evkb `filter_fir_test` gate.
+> Guard sweep landed — six 🟡 components revived and HW-verified via the evkb
+> `guard_sweep_test` gate; a stale SerialFlash include was discovered and
+> stripped in synth_wavetable.
 
 | Guard style | Effect on RT1176 |
 |---|---|
@@ -20,7 +23,7 @@ register usage. Three guard families decide a file's fate:
 Legend:
 ✅ verified in an evkb gate (QEMU + real-hardware) ·
 🟢 expected-compatible, not yet exercised on 1176 ·
-🟡 needs a small guard fix (add `__IMXRT1176__` / switch to `__ARM_ARCH_7EM__`) ·
+🟡 needs a small guard fix (remaining: `Audio.h` master include — Phase A step 3; per-component guard fixes landed 2026-07-21) ·
 🔵 (retired 2026-07-21 — CMSIS-DSP landed in the evkb manifest; formerly: blocked on arm_math) ·
 🟠 needs an RT1062→RT1176 hardware port ·
 🟣 needs external hardware (and a port where noted) ·
@@ -30,28 +33,29 @@ Legend:
 
 `input_i2s` (SAI1 RX, mic on WM8962 **right** channel), `output_i2s` (SAI1 TX
 DMA), `control_wm8962`, `play_sd_wav`, `synth_sine`, `analyze_peak`,
-`filter_fir`, `analyze_fft256`, `memcpy_audio.S`, `spi_interrupt`,
-`data_waveforms.c`. `AudioStream` itself lives in the core (dispatch on spare
-`IRQ_SOFTWARE=44`, 44.1 kHz).
+`filter_fir`, `analyze_fft256`, `synth_karplusstrong`, `synth_simple_drum`,
+`synth_wavetable`, `effect_delay`, `play_queue`/`record_queue`,
+`memcpy_audio.S`, `spi_interrupt`, `data_waveforms.c`. `AudioStream` itself
+lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 
 ## Synths
 
 | Component | Status | Notes |
 |---|---|---|
 | synth_sine | ✅ | in gates (fork already stripped its unused `arm_math` include) |
-| synth_waveform | 🟢 | arch-guarded + bandlimit tables; `.h` has an unused `arm_math` include to strip |
+| synth_waveform | 🟢 | arch-guarded + bandlimit tables |
 | synth_dc, synth_pinknoise, synth_whitenoise, synth_pwm | 🟢 | arch/`KINETISL`-split — full path taken on CM7 |
 | synth_tonesweep | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_sin_q31`) |
-| synth_karplusstrong | 🟡 | `KINETISK \|\| __IMXRT1062__` around the whole `update()` — **silently dead** today |
-| synth_simple_drum | 🟡 | same silent-dead pattern |
-| synth_wavetable | 🟡 | same silent-dead pattern |
+| synth_karplusstrong | ✅ | guards -> `__ARM_ARCH_7EM__`; HW-verified via evkb `guard_sweep_test` |
+| synth_simple_drum | ✅ | guards -> `__ARM_ARCH_7EM__`; HW-verified via evkb `guard_sweep_test` |
+| synth_wavetable | ✅ | guards -> `__ARM_ARCH_7EM__`; HW-verified via evkb `guard_sweep_test` (synthetic single-cycle instrument) |
 
 ## Effects
 
 | Component | Status | Notes |
 |---|---|---|
 | bitcrusher, chorus, combine, envelope, fade, granular, midside, multiply, rectifier, reverb, freeverb, wavefolder, waveshaper | 🟢 | pure DSP, arch-guarded or unguarded |
-| effect_delay | 🟡 | works, but `DELAY_QUEUE_SIZE` falls to the small `#else` — add 1176 to the `.h` guard for the 4-second buffer |
+| effect_delay | ✅ | 1176 joins the 4-second tier; 200 ms tap HW-verified via `guard_sweep_test` |
 | effect_flange | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_sin_q15`) |
 | effect_delay_ext | 🟣 | code is portable; needs an external SPI RAM (23LC1024-class) on the header SPI — untested |
 
@@ -70,7 +74,7 @@ DMA), `control_wm8962`, `play_sd_wav`, `synth_sine`, `analyze_peak`,
 | analyze_peak | ✅ | in gates |
 | analyze_rms, analyze_tonedetect | 🟢 | need `utility/sqrt_integer.c` compiled alongside |
 | analyze_print | 🟢 | |
-| analyze_notefreq | 🟢 | `arm_math` include is unused (no calls) — strip it like synth_sine did |
+| analyze_notefreq | 🟢 | |
 | analyze_fft256 | ✅ | HW-verified via evkb `filter_fir_test` |
 | analyze_fft1024 | 🟢 | unblocked — CMSIS-DSP (`arm_math`) now in the evkb manifest; needs its own gate (`arm_cfft_radix4_q15` + q15 twiddle tables) |
 
@@ -80,7 +84,7 @@ DMA), `control_wm8962`, `play_sd_wav`, `synth_sine`, `analyze_peak`,
 |---|---|---|
 | mixer | 🟢 | arch-guarded; used implicitly nowhere yet — should just work |
 | play_memory | 🟢 | |
-| play_queue, record_queue | 🟡 | work, but buffer counts fall to the small `#else` (32/53 vs 80/209) — one-line guard fix each |
+| play_queue, record_queue | ✅ | deep-buffer tiers (80/209) HW-verified via `guard_sweep_test` |
 | play_sd_wav | ✅ | in gates (SD via USDHC) |
 | play_sd_raw | 🟢 | same SD path as play_sd_wav |
 | play_serialflash_raw | 🟣 | needs the SerialFlash library (not in the evkb manifest) + an external flash chip |
@@ -137,10 +141,13 @@ DMA), `control_wm8962`, `play_sd_wav`, `synth_sine`, `analyze_peak`,
    `examples/audio/filter_fir_test` (sine → AudioFilterFIR boxcar →
    AudioAnalyzeFFT256 + peak, zero Audio source changes). The former 🔵 rows
    are unblocked (filter_fir + analyze_fft256 already ✅).
-2. **Guard sweep** (the 🟡 rows): add `__IMXRT1176__` — or better, switch the
-   chip lists to `__ARM_ARCH_7EM__` — in synth_karplusstrong, synth_simple_drum,
-   synth_wavetable, effect_delay.h, play_queue.h, record_queue.h. Strip the
-   dead `arm_math` includes (synth_waveform.h, analyze_notefreq).
+2. **Guard sweep — DONE 2026-07-21**: chip lists switched to
+   `__ARM_ARCH_7EM__` in synth_karplusstrong, synth_simple_drum,
+   synth_wavetable, effect_delay.h, play_queue.h, record_queue.h; dead
+   `arm_math` includes stripped (synth_waveform.h+.cpp, analyze_notefreq.cpp)
+   plus a stale SerialFlash include in synth_wavetable.cpp. All six components
+   HW-verified via the evkb `examples/audio/guard_sweep_test` gate (six runtime
+   stages, red-then-green, QEMU == HW transcripts).
 3. **"Audio.h compiles" gate**: an evkb QEMU gate that `#include <Audio.h>`,
    compiles every portable node, and runs a known-answer chain
    (waveform → filter → fft → assert bin). This pins the whole 🟢 tier and
