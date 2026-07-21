@@ -19,6 +19,7 @@ audio_block_t *AudioInputI2SInt::block_right = NULL;
 uint16_t AudioInputI2SInt::block_offset = 0;
 bool AudioInputI2SInt::update_responsibility = false;
 volatile uint32_t AudioInputI2SInt::frame_count = 0;
+volatile uint32_t AudioInputI2SInt::rx_overflows = 0;
 
 void AudioInputI2SInt::begin(void)
 {
@@ -43,6 +44,13 @@ void AudioInputI2SInt::isr(void)
 	audio_block_t *left = block_left;
 	audio_block_t *right = block_right;
 	uint32_t off = block_offset;
+
+	/* Overflow check FIRST: if the FIFO overflowed it may hold an odd word
+	 * count (L/R silently swapped forever after); the check W1Cs FEF and
+	 * FIFO-resets back to a pair-aligned empty state before we drain. */
+	if (sai1176_rx_check_overflow(&sai1176_evkb_sai1)) {
+		rx_overflows++;
+	}
 
 	if (left && right && off < AUDIO_BLOCK_SAMPLES) {
 		uint32_t n = sai1176_rx_service(&sai1176_evkb_sai1,

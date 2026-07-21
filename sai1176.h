@@ -178,6 +178,15 @@ uint32_t sai1176_tx_service(const sai1176_hw_t *hw, const int16_t *l,
 uint32_t sai1176_rx_service(const sai1176_hw_t *hw, int16_t *l,
                             int16_t *r, uint32_t frames);
 
+/* RX overflow detect + recover. An RX FIFO overflow (RCSR.FEF) can drop an
+ * ODD word count, permanently swapping L/R in every later pair -- and with
+ * only 8 frames of margin above the watermark while the SAI ISR runs below
+ * software_isr's priority, that is a real hazard, not a theoretical one.
+ * If FEF is set: W1C it, pulse RCSR.FR (FIFO reset -- re-empties to a
+ * pair-aligned state), return 1. Else return 0. Call from the RX service
+ * path each ISR entry. */
+uint32_t sai1176_rx_check_overflow(const sai1176_hw_t *hw);
+
 /* --- Shared ISR dispatch -------------------------------------------------
  * ONE SAI interrupt line services both directions. Consumers install
  * sai1176_isr_dispatch as the SAI1 vector (per-world hookup: see the header

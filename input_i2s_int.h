@@ -42,6 +42,10 @@ public:
 	virtual void update(void);
 	void begin(void);
 	static uint32_t frameCount(void) { return frame_count; }
+	/* RX FIFO overflows detected (each one FEF-cleared + FIFO-reset back to
+	 * a pair-aligned state by sai1176_rx_check_overflow -- an overflow can
+	 * drop an odd word count and silently swap L/R forever). Gates assert 0. */
+	static uint32_t overflows(void) { return rx_overflows; }
 	static void isr(void);           /* rx service hook */
 protected:
 	static audio_block_t *block_left;
@@ -49,6 +53,7 @@ protected:
 	static uint16_t block_offset;    /* frames captured into the pair */
 	static bool update_responsibility;
 	static volatile uint32_t frame_count;
+	static volatile uint32_t rx_overflows;
 };
 
 #endif /* __IMXRT1176__ || EVKB_CM4_WORLD */

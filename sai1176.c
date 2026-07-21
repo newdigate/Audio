@@ -207,6 +207,28 @@ uint32_t sai1176_rx_service(const sai1176_hw_t *hw, int16_t *l,
 	return done;
 }
 
+uint32_t sai1176_rx_check_overflow(const sai1176_hw_t *hw)
+{
+	sai1176_regs_t *r = sai_regs(hw);
+	uint32_t rcsr = r->RCSR;
+
+	if (!(rcsr & SAI1176_CSR_FEF)) {
+		return 0;
+	}
+	/* Overflow: the FIFO may now hold an odd word count -> every later
+	 * L/R pair silently swapped. W1C the error, then FIFO-reset back to a
+	 * pair-aligned (empty) state. Preserve only the enable/interrupt/DMA
+	 * control bits on the writes (all other flag bits are W1C or RO --
+	 * writing them as 0 is a no-op; writing readback values would W1C
+	 * flags we did not mean to touch). */
+	uint32_t ctrl = rcsr & (SAI1176_CSR_EN | SAI1176_CSR_BCE |
+	                        SAI1176_CSR_FRIE | SAI1176_CSR_FWIE |
+	                        SAI1176_CSR_FRDE);
+	r->RCSR = ctrl | SAI1176_CSR_FEF;   /* clear the error flag */
+	r->RCSR = ctrl | SAI1176_CSR_FR;    /* FIFO reset (momentary) */
+	return 1;
+}
+
 /* ---- Shared ISR dispatch (no NVIC access; see sai1176.h) ---------------- */
 
 void (*sai1176_tx_isr_hook)(void) = 0;
