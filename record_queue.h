@@ -33,7 +33,7 @@
 class AudioRecordQueue : public AudioStream
 {
 private:
-#if defined(__IMXRT1062__) || defined(__MK66FX1M0__) || defined(__MK64FX512__)
+#if defined(__IMXRT1062__) || defined(__IMXRT1176__) || defined(__MK66FX1M0__) || defined(__MK64FX512__)
 	static const int max_buffers = 209;
 #else
 	static const int max_buffers = 53;

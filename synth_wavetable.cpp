@@ -27,7 +27,10 @@
 #include <Arduino.h>
 #include "synth_wavetable.h"
 #include <dspinst.h>
-#include <SerialFlash.h>
+// NOTE: upstream includes <SerialFlash.h> here, but this file uses no
+// SerialFlash symbol -- stripped so the node doesn't require the SerialFlash
+// library (discovered when guard_sweep_test became the first gate to compile
+// this file; see the plan's Task 1 stub note).
 
 //#define TIME_TEST_ON
 //#define ENVELOPE_DEBUG
@@ -176,7 +179,7 @@ void AudioSynthWavetable::setFrequency(float freq) {
  *
  */
 void AudioSynthWavetable::update(void) {
-#if defined(KINETISK) || defined(__IMXRT1062__)
+#if defined(__ARM_ARCH_7EM__)   // Cortex-M4/M7: KINETISK + IMXRT1062 + IMXRT1176
 	// exit if nothing to do
 	if (env_state == STATE_IDLE || 
 		nullptr == current_sample ||

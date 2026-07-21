@@ -27,7 +27,7 @@
 #include <Arduino.h>
 #include "synth_karplusstrong.h"
 
-#if defined(KINETISK) || defined(__IMXRT1062__)
+#if defined(__ARM_ARCH_7EM__)   // Cortex-M4/M7: KINETISK + IMXRT1062 + IMXRT1176
 static uint32_t pseudorand(uint32_t lo)
 {
 	uint32_t hi;
@@ -44,7 +44,7 @@ static uint32_t pseudorand(uint32_t lo)
 
 void AudioSynthKarplusStrong::update(void)
 {
-#if defined(KINETISK) || defined(__IMXRT1062__)
+#if defined(__ARM_ARCH_7EM__)   // Cortex-M4/M7: KINETISK + IMXRT1062 + IMXRT1176
 	audio_block_t *block;
 
 	if (state == 0) return;

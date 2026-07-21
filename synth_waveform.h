@@ -29,7 +29,9 @@
 
 #include <Arduino.h>     // github.com/PaulStoffregen/cores/blob/master/teensy4/Arduino.h
 #include <AudioStream.h> // github.com/PaulStoffregen/cores/blob/master/teensy4/AudioStream.h
-#include <arm_math.h>    // github.com/PaulStoffregen/cores/blob/master/teensy4/arm_math.h
+// NOTE: upstream includes <arm_math.h> here, but nothing in this file or
+// synth_waveform.cpp uses any arm_math symbol -- stripped so consumers don't
+// need the CMSIS-DSP library (same rationale as synth_sine.h).
 
 // waveforms.c
 extern "C" {

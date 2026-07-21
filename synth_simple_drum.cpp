@@ -109,7 +109,7 @@ void AudioSynthSimpleDrum::pitchMod(float depth)
 
 void AudioSynthSimpleDrum::update(void)
 {
-#if defined(KINETISK) || defined(__IMXRT1062__)
+#if defined(__ARM_ARCH_7EM__)   // Cortex-M4/M7: KINETISK + IMXRT1062 + IMXRT1176
   audio_block_t *block_wav;
   int16_t *p_wave, *end;
   int32_t sin_l, sin_r, interp, mod, mod2, delta;

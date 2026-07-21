@@ -23,7 +23,8 @@
 #include <Arduino.h>
 #include "analyze_notefreq.h"
 #include "utility/dspinst.h"
-#include "arm_math.h"
+// NOTE: upstream includes "arm_math.h" here, but this file makes no arm_
+// calls -- stripped so the node doesn't require the CMSIS-DSP library.
 
 #define HALF_BLOCKS AUDIO_GUITARTUNER_BLOCKS * 64
 

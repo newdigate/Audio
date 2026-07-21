@@ -30,7 +30,7 @@
 #include <AudioStream.h> // github.com/PaulStoffregen/cores/blob/master/teensy4/AudioStream.h
 #include "utility/dspinst.h"
 
-#if defined(__IMXRT1062__)
+#if defined(__IMXRT1062__) || defined(__IMXRT1176__)
   // 4.00 second maximum on Teensy 4.0
   #define DELAY_QUEUE_SIZE  (176512 / AUDIO_BLOCK_SAMPLES)
 #elif defined(__MK66FX1M0__)

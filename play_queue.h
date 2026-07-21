@@ -33,7 +33,7 @@
 class AudioPlayQueue : public AudioStream
 {
 private:
-#if defined(__IMXRT1062__) || defined(__MK66FX1M0__) || defined(__MK64FX512__)
+#if defined(__IMXRT1062__) || defined(__IMXRT1176__) || defined(__MK66FX1M0__) || defined(__MK64FX512__)
 	static const unsigned int MAX_BUFFERS = 80;
 #else
 	static const unsigned int MAX_BUFFERS = 32;
