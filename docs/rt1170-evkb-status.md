@@ -24,6 +24,15 @@ register usage. Three guard families decide a file's fate:
 > codec+SAI+graph+FFT with the CM7 idle (audible 1 kHz on J101). The old
 > "the audio graph cannot run on the CM4" caveat is retired — see the new
 > "CM4 ownership (dual-core)" section.
+>
+> **Changelog 2026-07-22 — Phase A COMPLETE**: the **full Audio library now
+> builds for RT1176** — `#include <Audio.h>` compiles every portable node and
+> links on the **CM7**, HW-verified via the evkb `audio_h_test` gate (waveform →
+> AudioFilterFIR → AudioAnalyzeFFT256 known-answer chain, QEMU == HW). This
+> closes **Phase A step 3**, so **Phase A is COMPLETE** (CMSIS-DSP + guard sweep
+> + Audio.h all landed). The hardware I/O nodes still compile as empty objects
+> (no RT1176 port — instantiating one is a link error; see that section);
+> everything else in the 🟢 tier is now pinned by the aggregate build.
 
 | Guard style | Effect on RT1176 |
 |---|---|
@@ -34,7 +43,7 @@ register usage. Three guard families decide a file's fate:
 Legend:
 ✅ verified in an evkb gate (QEMU + real-hardware) ·
 🟢 expected-compatible, not yet exercised on 1176 ·
-🟡 needs a small guard fix (remaining: `Audio.h` master include — Phase A step 3; per-component guard fixes landed 2026-07-21) ·
+🟡 (retired 2026-07-22 — **Phase A complete**; no 🟡 rows remain. The last one, `Audio.h`, now builds the whole library — see the changelog) ·
 🔵 (retired 2026-07-21 — CMSIS-DSP landed in the evkb manifest; formerly: blocked on arm_math) ·
 🟠 needs an RT1062→RT1176 hardware port ·
 🟣 needs external hardware (and a port where noted) ·
@@ -101,7 +110,13 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | play_serialflash_raw | 🟣 | needs the SerialFlash library (not in the evkb manifest) + an external flash chip |
 | Quantizer, Resampler | 🟢 | portable C++/float support classes (used by async_input_spdif3) |
 
-## Hardware I/O nodes (all compile empty today — whole-file `__IMXRT1062__` guards)
+## Hardware I/O nodes (whole-file `__IMXRT1062__` guards)
+
+As of the full-library build (2026-07-22) these all **compile clean as empty
+objects** as part of `#include <Audio.h>`, but remain **uninstantiable** on
+RT1176 — there is no port behind the guard, so the class body is empty.
+Instantiating one is a **link error, not a compile error**.
+`input_i2s`/`output_i2s` are the exception: fully ported (the template below).
 
 | Component | Status | Notes |
 |---|---|---|
@@ -139,7 +154,7 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | utility/sqrt_integer.{c,h} | 🟢 | needed by rms/tonedetect |
 | utility/imxrt_hw.cpp (`set_audioClock`) | 🟠 | RT1062 CCM code; the 1176 ports do their own clocking — port or replace when SAI2/SPDIF/MQS work starts |
 | utility/pdb.h | ❌ | Kinetis PDB |
-| Audio.h (master include) | 🟡 | **not currently compilable on 1176** — the guard sweep across its 81 includes is still pending. Gates cherry-pick individual headers instead |
+| Audio.h (master include) | ✅ | full library builds for RT1176; HW-verified via evkb `audio_h_test` |
 
 ## CM4 ownership (dual-core) — ✅ HW-verified 2026-07-22
 
@@ -178,7 +193,7 @@ J101). This retires the old "anything on the CM4 is out of scope" note for audio
 
 ## Roadmap
 
-**Phase A — no hardware needed, biggest surface unlock**
+**Phase A — no hardware needed, biggest surface unlock — ✅ COMPLETE 2026-07-22**
 1. **CMSIS-DSP — DONE 2026-07-21**: landed as a pinned manifest library in
    evkb (`import_evkb_cmsis_dsp()` in `evkb.cmake`, CMSIS-DSP v1.17.1 +
    CMSIS_6, Apache-2.0 — passes the license firewall) rather than inside
@@ -194,10 +209,11 @@ J101). This retires the old "anything on the CM4 is out of scope" note for audio
    plus a stale SerialFlash include in synth_wavetable.cpp. All six components
    HW-verified via the evkb `examples/audio/guard_sweep_test` gate (six runtime
    stages, red-then-green, QEMU == HW transcripts).
-3. **"Audio.h compiles" gate**: an evkb QEMU gate that `#include <Audio.h>`,
-   compiles every portable node, and runs a known-answer chain
-   (waveform → filter → fft → assert bin). This pins the whole 🟢 tier and
-   catches regressions.
+3. **"Audio.h compiles" gate — DONE 2026-07-22**: the evkb
+   `examples/audio/audio_h_test` gate `#include <Audio.h>`, compiles every
+   portable node, and runs a known-answer chain (waveform → AudioFilterFIR →
+   AudioAnalyzeFFT256 → assert bin), HW-verified (QEMU == HW). This pins the
+   whole 🟢 tier and catches regressions. **Phase A is now COMPLETE.**
 
 **Phase B — new EVKB-testable peripherals (pin-mux audit against RevC3 first)**
 4. SPDIF block port (`output_spdif3` → `input_spdif3` → async): `GPIO_AD_14`/D7
