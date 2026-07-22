@@ -51,6 +51,24 @@ static void sai1176_udelay_loops(volatile uint32_t n)
 
 void sai1176_pll_init_44k(void)
 {
+#if defined(SAI1176_PLL_EXTERNAL)
+	/* ★★HW SILICON FINDING (cm4_audio_test capstone, 2026-07-22): a CM4 image
+	 * CANNOT drive the ANATOP Audio-PLL AI-write handshake. sai1176_ai_write's
+	 * toggle-done poll (bit 9) never completes from the CM4, so this function
+	 * hangs inside out.begin() -- BEFORE the SAI FIFO-request IRQ is ever
+	 * enabled. On the EVKB the capstone produced silence + sai_isr_count==0
+	 * while QEMU was green (QEMU models the AI handshake, so it does not hang),
+	 * which is EXACTLY the ANATOP-PLL-from-CM4 probe the plan predicted
+	 * (2026-07-21-cm4-audio-pipeline.md, Task 3 step 4 + the architecture note).
+	 * Documented fallback: the CM7 pre-arms this same 44.1 kHz Audio PLL via
+	 * sai1176_pll_init_44k() BEFORE Multicore.begin(), and the CM4 image (built
+	 * -DSAI1176_PLL_EXTERNAL) skips the AI writes here. Ownership of the clock
+	 * root, LPCG, pads, SAI registers, codec and graph stays entirely on the
+	 * CM4 -- only the raw ANATOP PLL bring-up is delegated (a 1-line CM7
+	 * concession, per the plan). Undefined (the CM7 nodes + the default CM4
+	 * build) -> the full sequence below runs, byte-identical to before. */
+	return;
+#else
 	/* AI sub-addresses (fsl_anatop_ai.h kAI_PLLAUDIO_*): CTRL0=0x00,
 	 * CTRL0_SET=0x04, CTRL0_CLR=0x08, CTRL2(num)=0x20, CTRL3(denom)=0x30.
 	 * CTRL0 bits: loopDiv[6:0], HOLD_RING_OFF b13, POWER_UP b14, ENABLE b15,
@@ -79,6 +97,7 @@ void sai1176_pll_init_44k(void)
 	sai1176_ai_write(0x04, (1u << 15));                /* CTRL0_SET: ENABLE */
 	REG32(ANADIG_PLL_AUDIO_CTRL_A) &= ~PLL_AUDIO_CTRL_GATE;  /* ungate */
 	sai1176_ai_write(0x08, (1u << 16));                /* CTRL0_CLR: BYPASS */
+#endif /* SAI1176_PLL_EXTERNAL */
 }
 
 void sai1176_config(const sai1176_hw_t *hw)
