@@ -25,7 +25,12 @@
 #include <Arduino.h>
 #include "effect_reverb.h"
 #include "utility/dspinst.h"
-#include "math_helper.h"
+// NOTE: upstream includes "math_helper.h" here (a CMSIS-DSP *Examples* file that
+// is not shipped on our include path). This file uses no math_helper symbol; its
+// real dependency is arm_math.h (q31_t + arm_float_to_q31/arm_shift_q31/
+// arm_add_q31/arm_q15<->q31), which math_helper.h only pulled in transitively --
+// include it directly, the same way effect_flange/synth_tonesweep/filter_ladder do.
+#include "arm_math.h"
 
 void 
 AudioEffectReverb::_do_comb_apf(struct comb_apf *apf, int32_t *in_buf, int32_t *out_buf)

@@ -23,7 +23,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#if !defined(__IMXRT1052__) && !defined(__IMXRT1062__)
+#if !defined(__IMXRT1052__) && !defined(__IMXRT1062__) && !defined(__IMXRT1176__)
 #ifndef pdb_h_
 #define pdb_h_
 
