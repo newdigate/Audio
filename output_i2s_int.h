@@ -33,6 +33,18 @@
  *    SAI1_IRQHandler wrapper calling sai1176_isr_dispatch() in the static
  *    vector table at index 92 (16 + IRQ 76), write NVIC_ISER2 |= (1u << 12)
  *    (IRQ 76 - 64), and execute `cpsie i` after all begin() calls.
+ *    ★★SET THE SAI1 IRQ PRIORITY ABOVE THE GRAPH (a numerically LOWER value
+ *    than IRQ_SOFTWARE/software_isr = 208) -- e.g. NVIC_SET_PRIORITY(76, 192).
+ *    The SAI I/O ISR is time-critical (a hard FIFO drain/fill deadline); the
+ *    AudioStream graph is not. If the graph outranks SAI, a heavy graph update
+ *    (e.g. analyze_fft256) preempts RX/TX service and the FIFO overflows/
+ *    underruns: EVKB 2026-07-22, cm4_audio_test at prio 224 -> rx_overflows=
+ *    0x3FF + fef=1 on silicon (QEMU masks it -- its SAI model does not enforce
+ *    FIFO timing). NOTE: the CM7 begin() above keeps 224 (graph-outranks-SAI),
+ *    which is fine for LIGHT graphs (i2s_int_test, HW-verified) because a cheap
+ *    update returns before the FIFO drains; a CM7 firmware running a heavy
+ *    graph would need the same inversion -- a separate follow-up (own HW
+ *    re-verify), so the CM7 begin() path is deliberately left unchanged here.
  *
  * AudioInputI2SInt (input_i2s_int.h) shares this file's SAI1 hardware table
  * and config-once helper, and rides the same single SAI1 ISR.
