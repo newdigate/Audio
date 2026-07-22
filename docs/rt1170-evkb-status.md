@@ -1,8 +1,11 @@
 # Audio library — RT1170-EVKB (i.MX RT1176, CM7) status & roadmap
 
 Status of every component in this fork against the `imxrt1176` core on the
-MIMXRT1170-EVKB. **CM7 only** — the audio graph cannot run on the CM4 (SAI/eDMA
-completion IRQs are CM7-domain).
+MIMXRT1170-EVKB. **Primarily CM7** — but as of **2026-07-22 the CM4 can also own
+the whole audio pipeline**, interrupt-driven (not DMA): the DMA I/O nodes stay
+CM7-only (main-eDMA completion IRQs are CM7-domain), while the new
+interrupt-driven SAI nodes + CMSIS-DSP run on the M4. See the
+"CM4 ownership (dual-core)" section below.
 
 Audited 2026-07-20 by sweeping every source file's platform guards and hardware
 register usage. Three guard families decide a file's fate:
@@ -13,6 +16,14 @@ register usage. Three guard families decide a file's fate:
 > Guard sweep landed — six 🟡 components revived and HW-verified via the evkb
 > `guard_sweep_test` gate; a stale SerialFlash include was discovered and
 > stripped in synth_wavetable.
+>
+> **Changelog 2026-07-22**: the CM4 can now **own the audio pipeline**
+> (dual-core, interrupt-driven — not DMA). New interrupt-driven SAI nodes
+> `output_i2s_int`/`input_i2s_int` + the shared `sai1176.c` register/clock core,
+> CMSIS-DSP running on the M4, and a capstone where the CM4 owns
+> codec+SAI+graph+FFT with the CM7 idle (audible 1 kHz on J101). The old
+> "the audio graph cannot run on the CM4" caveat is retired — see the new
+> "CM4 ownership (dual-core)" section.
 
 | Guard style | Effect on RT1176 |
 |---|---|
@@ -130,6 +141,41 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 | utility/pdb.h | ❌ | Kinetis PDB |
 | Audio.h (master include) | 🟡 | **not currently compilable on 1176** — the guard sweep across its 81 includes is still pending. Gates cherry-pick individual headers instead |
 
+## CM4 ownership (dual-core) — ✅ HW-verified 2026-07-22
+
+**The CM4 can own the entire audio pipeline**, interrupt-driven (not DMA).
+Proven on the EVKB by the evkb `examples/dualcore/cm4_audio_test` capstone: the
+CM4 owns the WM8962 codec over LPI2C5, interrupt-driven SAI1 I/O, the AudioStream
+graph, and CMSIS-DSP `analyze_fft256`, while the CM7 boots the image and parks in
+WFI (`cm7_audio_isers=0` — the CM7 enabled no audio interrupt; audible 1 kHz on
+J101). This retires the old "anything on the CM4 is out of scope" note for audio.
+
+| Capability | Status | Notes |
+|---|---|---|
+| `output_i2s_int` / `input_i2s_int` (interrupt-driven SAI1 nodes, no eDMA) | ✅ | new nodes; HW-verified on the **CM7** (evkb `i2s_int_test`) and on the **CM4** (evkb `cm4_audio_test`). The SAI1 combined FIFO IRQ (line 76) reaches the CM4 NVIC (RM Tables 4-1/4-2). |
+| `sai1176.c` (shared SAI register/clock core) | ✅ | one HW-verified SAI1 sequence both worlds compile (Phase-3.3 idiom, like `lpspi1176.c`/`lpi2c1176.c`); adds `SAI1176_PLL_EXTERNAL` for the CM7-pre-arm split (finding 1). |
+| `input_i2s` / `output_i2s` (DMA SAI1 nodes) | CM7-only (forever) | the main-eDMA completion IRQs are CM7-domain (RM Table 4-1); the CM4's DMA is `eDMA_LPSR`, which does not carry the SAI dma-request. DMA-fed audio stays on the CM7. |
+| CMSIS-DSP on the M4 | ✅ | the CMSIS-DSP amalgams compile into a CM4 image; known-answer FFT HW-verified via evkb `cm4_fft_test`. DSP-heavy nodes can run off the CM7. |
+
+**Three silicon findings from the capstone (EVKB 2026-07-22):**
+1. **The CM4 cannot drive the ANATOP Audio PLL.** The AI-write handshake to the
+   ANATOP PLL register file hangs when issued from the M4 (QEMU fakes the
+   handshake, so it only surfaces on silicon). Fix: the CM7 pre-arms the 44.1 kHz
+   Audio PLL before `Multicore.begin()` and the CM4 image is built
+   `-DSAI1176_PLL_EXTERNAL` to skip the AI writes; the CM4 still owns the clock
+   root/LPCG/pads/SAI/codec/graph. This is the gate's default build.
+2. **The SAI I/O ISR must outrank the AudioStream graph.** At SAI IRQ priority
+   224 (below `software_isr`=208) the fft256 graph update preempted RX service on
+   the 400 MHz M4 and the RX FIFO overflowed (`rx_overflows=0x3FF`). At priority
+   192 (SAI outranks the graph — standard Teensy audio design, which the CM7
+   hides because DMA services the FIFO) the CM4 runs clean.
+3. **QEMU FIFO metrics are anti-correlated with silicon.** The QEMU SAI model
+   does not enforce FIFO drain/fill timing, so `underruns`/`fef`/`rx_overflows`
+   read the OPPOSITE of the board (QEMU shows graph-starve underruns where HW is
+   clean, and vice-versa). The QEMU gate asserts only the deterministic verdict
+   (`AUDIO_CM4_DET`); the full `AUDIO_CM4=PASS` (which adds FIFO health) is the
+   HW oracle.
+
 ## Roadmap
 
 **Phase A — no hardware needed, biggest surface unlock**
@@ -169,4 +215,5 @@ lives in the core (dispatch on spare `IRQ_SOFTWARE=44`, 44.1 kHz).
 - LPADC input node; MICFIL/PDM input node.
 
 **Out of scope**: hex/oct I2S (T4.1 pinouts), ADAT (Kinetis-only), Kinetis
-DAC/ADC/PWM nodes as-is; anything on the CM4.
+DAC/ADC/PWM nodes as-is; DMA-fed audio on the CM4 (main-eDMA completion IRQs are
+CM7-domain — see "CM4 ownership (dual-core)"; interrupt-driven CM4 audio is done).
