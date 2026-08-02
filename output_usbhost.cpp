@@ -33,8 +33,19 @@ AudioOutputUSBHost::AudioOutputUSBHost(USBAudioOut &usb)
 {
 	instance = this;
 
-	// Claim the graph's clock ownership, exactly as AudioOutputI2S does from
-	// its DMA path. Only one node may own it; USB is the master here.
+	// Enforce the rate match by construction instead of documenting it. The
+	// graph produces AUDIO_BLOCK_SAMPLES frames per update at GRAPH_RATE; if
+	// the USB side were left at a different rate, playback would be off by the
+	// ratio (44100 into 48000 is 8.8% sharp) and the FIFO would drain faster
+	// than it fills, for good. That is a defect, not a caveat, so the adapter
+	// sets the rate rather than trusting the sketch to match it.
+	//
+	// format() only takes effect before the device attaches, which holds here:
+	// this node is constructed statically, before USBHost::begin().
+	audio.format(GRAPH_RATE, 2, 16);
+
+	// Claim the graph's clock ownership, as AudioOutputI2S does from its DMA
+	// path. Only one node may own it.
 	update_responsibility = update_setup();
 
 	audio.onFrameConsumed(frame_consumed);
@@ -44,14 +55,19 @@ AudioOutputUSBHost::AudioOutputUSBHost(USBAudioOut &usb)
 // USBHost::Task(), not an interrupt, so this must stay short -- update_all()
 // only pends IRQ_SOFTWARE, it does not run the graph inline.
 //
-// The FIFO check is what actually paces the graph: run it when there is room
-// for another block, and not otherwise. A 128-sample stereo block is 256
-// int16 samples, about 2.9 ms of audio, so this fires roughly every third
-// frame rather than every one.
+// This is the whole clock. Produce another block only while occupancy is below
+// the setpoint, so the FIFO is held near FIFO_TARGET_SAMPLES rather than
+// pushed to full. Because the FIFO drains at the device's real rate, holding
+// its level constant makes the graph run at the device's real rate -- which is
+// the point, and is why no explicit rate matching is needed.
+//
+// Recovery after a stall is bounded but ample: one block per frame is 128
+// frames/ms against roughly 48 consumed, so the FIFO refills about 2.7x faster
+// than it empties.
 void AudioOutputUSBHost::frame_consumed(void)
 {
 	if (!update_responsibility || instance == nullptr) return;
-	if (instance->audio.available() < AUDIO_BLOCK_SAMPLES * 2) return;
+	if (instance->audio.queued() >= FIFO_TARGET_SAMPLES) return;
 	AudioStream::update_all();
 }
 
