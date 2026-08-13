@@ -89,6 +89,31 @@ void AudioInputI2S::begin(void)
 	dma.triggerAtHardwareEvent(DMAMUX_SOURCE_SAI1_RX);
 
 	I2S1_RCSR = I2S_RCSR_RE | I2S_RCSR_BCE | I2S_RCSR_FRDE | I2S_RCSR_FR;
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+	// Enable the transmitter's bit-clock + frame-sync generator. On THIS board
+	// config_i2s() sets rsync=1 (RX synchronous to TX) because the WM8960
+	// listens on TX_BCLK/TX_SYNC -- the reverse of the Teensy's RX-master
+	// wiring, where the RCSR write above is sufficient. With TX disabled here
+	// there would be NO BCLK/FS at all: the codec never gets clocked, no data
+	// shifts into the RX FIFO, no DMA fires, no audio blocks flow. The bit clock
+	// and frame sync then continue for as long as TE/BCE stay set -- the
+	// transmitter simply shifts out zeros with FEF asserted, since this node
+	// never writes TDR. (config_i2s does set FCONT in TCR4, but that governs how
+	// word ordering resumes once TDR is written again; with no writer it is inert
+	// here and is NOT what keeps the clock alive.)
+	//
+	// OR the bits in rather than assigning: AudioOutputI2S::begin() may already
+	// have set TE|BCE|FRDE|FEIE, and a sketch that declares both nodes (output
+	// first, so it owns the clock) would otherwise have its TX DMA request bit
+	// cleared right here -- output goes silent once the FIFO drains, with nothing
+	// reporting an error. The Teensy 3.x branch above uses |= for this reason.
+	//
+	// Same fix, same reason, as the __IMXRT1176__ branch below and the Teensy
+	// 3.x branch above ("TX clock enable, because sync'd to TX"). ★ QEMU's
+	// injector-paced SAI model gates RX on the RCSR bits alone and cannot
+	// surface this -- on the 1176 it was hardware that caught it.
+	I2S1_TCSR |= I2S_TCSR_TE | I2S_TCSR_BCE;
+#endif
 
 #elif defined(__IMXRT1176__)
 	// SAI1_RXD0 = GPIO_AD_20 (ALT0); RX data is an input, needs a daisy
@@ -142,11 +167,17 @@ void AudioInputI2S::begin(void)
 	// Enable the transmitter's bit-clock + frame-sync generator. RX is synchronous
 	// to TX (RCR2_SYNC(1)), so with TX disabled there is NO BCLK/FS at all: the
 	// WM8962 never gets clocked, no mic data shifts into the RX FIFO, no DMA fires,
-	// no audio blocks flow. FCONT=1 (config_i2s TCR4, bit 28) keeps the clock
-	// running through the perpetual TX-FIFO underrun (this node never transmits).
+	// no audio blocks flow. The clock then continues for as long as TE/BCE stay
+	// set -- the transmitter just shifts out zeros with FEF asserted, since this
+	// node never writes TDR. (config_i2s sets FCONT in TCR4, bit 28, but that
+	// governs how word ordering resumes once TDR is written again; with no writer
+	// it is inert here and is NOT what keeps the clock alive.)
+	// OR the bits in rather than assigning, so this cannot clear the FRDE that
+	// AudioOutputI2S::begin() sets when a sketch declares both nodes; on a fresh
+	// boot TCSR reads 0, so |= is identical there.
 	// Mirrors the Teensy reference: "I2S_TCSR_TE | I2S_TCSR_BCE; // TX clock enable,
 	// because sync'd to TX". (QEMU's injector-paced SAI can't surface this; HW did.)
-	SAI1_TCSR = SAI_TCSR_TE | SAI_TCSR_BCE;
+	SAI1_TCSR |= SAI_TCSR_TE | SAI_TCSR_BCE;
 #endif
 	update_responsibility = update_setup();
 	dma.enable();
