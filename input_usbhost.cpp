@@ -47,8 +47,16 @@ void AudioInputUSBHost::update(void)
 	audio_block_t *right = allocate();
 	if (right == NULL) { release(left); blocks_dropped++; return; }
 
-	// Clamped defensively as well as by the constructor's request: a driver
-	// that ever reported more would otherwise overrun `buf`.
+	// The zero case is not merely defensive, it is the common one: capture_ch
+	// stays 0 from reset until beginRecording() assigns it, so every update()
+	// before the input interface is selected lands here -- and in QEMU, whose
+	// usb-audio model cannot capture, recording never starts and this is the
+	// ONLY path taken. Without the guard `want` would be 0, the zero-fill loop
+	// below would not run, and the fan loop would splat uninitialised stack
+	// into both outputs 128 times per update: noise, not silence.
+	//
+	// The upper clamp is the defensive half: a device reporting more channels
+	// than a stereo graph can use must not overrun `buf`.
 	uint8_t ch = audio.captureChannels();
 	if (ch == 0) ch = 1;
 	if (ch > 2) ch = 2;

@@ -36,12 +36,17 @@
 // That means the two clocks are genuinely independent and there is no
 // resampler between them: the adapter's converter runs on the adapter's
 // crystal, the SAI on the board's. This project has measured that offset five
-// times on the bench device -- about -86 ppm -- which at 44.1 kHz is roughly 4
-// frames per second of drift. The FIFO absorbs it until it does not, and then
-// one update() finds fewer than a block's worth of samples: underruns()
-// counts that, and the short read is zero-filled so the shortfall is silence
-// rather than stale audio. About one such block every quarter of a second at
-// -86 ppm is not audible as pitch error; it is a very occasional tick.
+// times on the bench device -- about -86 ppm -- which at 44.1 kHz is 44100 *
+// 86e-6 = 3.8 frames per second of drift. The FIFO absorbs it until it does
+// not, and then one update() finds fewer than a block's worth of samples:
+// underruns() counts that, and the short read is zero-filled so the shortfall
+// is silence rather than stale audio.
+//
+// Rate of those events, since it is the number to judge a heartbeat against:
+// the deficit accrues at 3.8 frames/s and one block is AUDIO_BLOCK_SAMPLES
+// (128) frames, so 128 / 3.8 = ONE ZERO-FILLED BLOCK EVERY ~34 SECONDS. Not
+// audible as pitch error -- a very occasional tick. Do not confuse the two
+// numbers: 3.8 per second is the FRAME slip, not the event rate.
 //
 // If a future design needs that tick gone, the fix is the fork's Resampler
 // between this node and the sink, not a change here.
