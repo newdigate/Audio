@@ -625,9 +625,23 @@ void AudioOutputI2S::config_i2s(bool only_bclk)
 	SAI1_TCR3 = SAI_TCR3_TCE(1);                    // enable channel 0
 	SAI1_TCR4 = SAI_TCR4_FRSZ(1) | SAI_TCR4_SYWD(15) | SAI_TCR4_MF |
 		    SAI_TCR4_FSD | SAI_TCR4_FSE | SAI_TCR4_FSP |
-		    (1u << 28);   // FCONT: keep the bit clock running through a FIFO
-				  // underrun (a polled/starting TX briefly underruns;
-				  // without FCONT the SAI halts and never recovers).
+		    (1u << 28);   // FCONT: resume transmitting after a FIFO underrun
+				  // without software intervention -- a polled or
+				  // just-started TX briefly underruns. Per RM
+				  // 58.3.6.3 the transmitter then continues from the
+				  // same word number in the frame, once TDR is
+				  // written again, so channel order survives the gap
+				  // instead of needing the FIFOs reinitialised.
+				  //
+				  // It does NOT keep the bit clock alive, which an
+				  // earlier version of this comment claimed. The
+				  // clock and frame sync run for as long as TE/BCE
+				  // stay set, and an underrunning transmitter simply
+				  // shifts out zeros while FEF is asserted.
+				  // input_i2s.cpp depends on exactly that -- it
+				  // enables TE/BCE purely to clock a synchronous RX
+				  // and never writes TDR at all -- so the two files
+				  // have to agree about this bit.
 	SAI1_TCR5 = SAI_TCR5_WNW(15) | SAI_TCR5_W0W(15) | SAI_TCR5_FBT(15);
 	// RX (SAI1_RCRn) is configured by AudioInputI2S (Task 2): synchronous to TX,
 	// sharing this BCLK/FS.
