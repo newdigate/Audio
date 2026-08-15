@@ -58,6 +58,10 @@ void AudioSynthAcidBass::noteOn(uint8_t note, uint8_t velocity, bool slide) {
 	// note cannot leave a duplicate that noteOff can never fully release
 	// (divergence 2 from mulch, see the header). Re-pushing below also gives
 	// the retriggered pitch last-note priority, which is what a player expects.
+	// This scan runs forward while noteOff's runs backward; the two are
+	// equivalent only because this dedup keeps held_ free of duplicates.
+	// Ordering matters too: dedup must precede the kMaxHeld eviction below, or
+	// retriggering a held pitch on a full stack would evict an unrelated note.
 	for (int i = 0; i < heldCount_; i++) {
 		if (held_[i] == note) {
 			for (int j = i + 1; j < heldCount_; j++) held_[j - 1] = held_[j];
@@ -121,9 +125,11 @@ void AudioSynthAcidBass::update(void) {
 		//
 		// The envelope and glide forms are exact (they are plain one-poles).
 		// Phase is the one approximation: mid-glide it advances at the
-		// END-of-block frequency instead of integrating the ramp, which is
-		// synth_waveform's approximation too and is inaudible -- the block it
-		// would have coloured is the one being dropped.
+		// END-of-block frequency instead of integrating the ramp. The ramp
+		// question does not arise in synth_waveform.cpp -- its fallback
+		// frequency is constant, so only the block-advance convention carries
+		// over, not a precedent for this. The error is inaudible regardless:
+		// the block it would have coloured is the one being dropped.
 		const float n = AUDIO_BLOCK_SAMPLES;
 		if (gliding_) {
 			curFreq_ = targetFreq_ + (curFreq_ - targetFreq_) * powf(1.0f - glideCoef_, n);
