@@ -141,5 +141,6 @@
 #include "synth_wavetable.h"
 #include "synth_acidbass.h"
 #include "transport.h"
+#include "seq_step.h"
 
 #endif
