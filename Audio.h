@@ -140,5 +140,6 @@
 #include "synth_pwm.h"
 #include "synth_wavetable.h"
 #include "synth_acidbass.h"
+#include "transport.h"
 
 #endif
