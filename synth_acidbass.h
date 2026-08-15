@@ -1,10 +1,17 @@
 /* Audio Library for Teensy - TB-303 style monophonic acid bass voice
  * Copyright (c) 2026, Nic Newdigate
  *
- * Ported from the mulch project's AcidVoice (same author, MIT). One deliberate
- * divergence: noteOff snaps pitch/glide state only when the SOUNDING note is
- * released; mulch snapped unconditionally, which killed an in-progress glide
- * when a sequencer released the old note right after a legato press.
+ * Ported from the mulch project's AcidVoice (same author, MIT). Two deliberate
+ * divergences, both in note handling -- the per-sample DSP is bit-exact:
+ *
+ *  1. noteOff snaps pitch/glide state only when the SOUNDING note is released;
+ *     mulch snapped unconditionally, which killed an in-progress glide when a
+ *     sequencer released the old note right after a legato press.
+ *  2. noteOn removes any existing entry for the same pitch before pushing it.
+ *     mulch pushed unconditionally while noteOff erased a single match, so two
+ *     noteOn(60) with no noteOff between them left an entry that could never be
+ *     released -- the gate never cleared and the voice droned forever.
+ *     Retriggering a still-held pitch is ordinary sequencer behaviour.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +40,20 @@
 #include <math.h>
 #include "synth_waveform.h"   // WAVEFORM_SAWTOOTH / WAVEFORM_SQUARE constants
 
+// Compact 4-pole (24 dB/oct) resonant low-pass -- the classic "simplified Moog"
+// ladder (Stilson/Smith). State only; the recurrence lives in
+// synth_acidbass.cpp, which also carries the note on why this voice does not
+// reuse the library's AudioFilterLadder.
+//
+// Declared here rather than in the .cpp only because AudioSynthAcidBass holds
+// one BY VALUE, so the type must be complete in this header.
+struct AcidLadder {
+	float s1 = 0, s2 = 0, s3 = 0, s4 = 0;   // stage outputs
+	float d1 = 0, d2 = 0, d3 = 0, d4 = 0;   // one-sample delays
+	// res in [0,1]; self-oscillates near 1. Cutoff is per-sample, not per-block.
+	float process(float in, float cutoffHz, float res);
+};
+
 // Monophonic 303-style voice: saw/square VCO + square sub-osc (-1 oct)
 // -> Stilson/Smith 4-pole ladder (env/accent/keytrack/filterFM modulated)
 // -> VCA -> bounded tanh distortion. Last-note priority; legato slide does
@@ -42,17 +63,23 @@ class AudioSynthAcidBass : public AudioStream
 public:
 	AudioSynthAcidBass() : AudioStream(0, NULL) { updateCoefs(); }
 
+	// USER CONTEXT ONLY -- both take a critical section and end with an
+	// unconditional __enable_irq(), so calling either from an ISR, or from
+	// inside another critical section, would re-enable interrupts early.
+	// (Same house rule as synth_simple_drum.cpp / effect_envelope.cpp.)
 	void noteOn(uint8_t note, uint8_t velocity, bool slide = false);
 	void noteOff(uint8_t note);
 
+	// WAVEFORM_SAWTOOTH and WAVEFORM_SQUARE are the only two shapes this voice
+	// has; every other WAVEFORM_* constant silently selects the sawtooth.
 	void waveform(short type) { waveform_ = (type == WAVEFORM_SQUARE) ? 1 : 0; }
 	void cutoff(float hz)     { cutoff_ = hz < 20.0f ? 20.0f : (hz > 12000.0f ? 12000.0f : hz); }
 	void resonance(float r)   { resonance_ = clamp01(r); }
 	void envMod(float a)      { envMod_ = clamp01(a); }
-	void decay(float s)       { decay_ = s < 1e-3f ? 1e-3f : s; updateCoefs(); }
+	void decay(float s)       { decay_ = s < 1e-3f ? 1e-3f : s; decayCoef_ = decayCoefOf(decay_); }
 	void accent(float a)      { accent_ = clamp01(a); }
 	void subLevel(float a)    { subLevel_ = clamp01(a); }
-	void slideTime(float s)   { slideTime_ = s < 1e-3f ? 1e-3f : s; updateCoefs(); }
+	void slideTime(float s)   { slideTime_ = s < 1e-3f ? 1e-3f : s; glideCoef_ = lagCoefOf(slideTime_); }
 	void filterFM(float a)    { filterFM_ = clamp01(a); }
 	void keyTrack(float a)    { keyTrack_ = clamp01(a); }
 	void distortion(float a)  { distortion_ = clamp01(a); }
@@ -64,35 +91,24 @@ public:
 	virtual void update(void);
 
 private:
-	// Compact 4-pole (24 dB/oct) resonant low-pass -- the classic "simplified
-	// Moog" ladder (Stilson/Smith). tanh on the feedback tap saturates
-	// self-oscillation: BIBO-stable even at res = 1 under hard drive, with a
-	// gentle "transistor" character; near-linear for small signals.
-	struct Ladder {
-		float s1 = 0, s2 = 0, s3 = 0, s4 = 0;   // stage outputs
-		float d1 = 0, d2 = 0, d3 = 0, d4 = 0;   // one-sample delays
-		float process(float in, float cutoffHz, float res) {
-			float fc = cutoffHz / (0.5f * AUDIO_SAMPLE_RATE_EXACT);
-			if (fc < 0.0f) fc = 0.0f;
-			if (fc > 0.99f) fc = 0.99f;
-			float f  = fc * 1.16f;
-			float fb = res * 4.0f * (1.0f - 0.15f * f * f);
-			float x  = in - tanhf(s4) * fb;
-			x *= 0.35013f * (f * f) * (f * f);
-			s1 = x  + 0.3f * d1 + (1.0f - f) * s1;  d1 = x;
-			s2 = s1 + 0.3f * d2 + (1.0f - f) * s2;  d2 = s1;
-			s3 = s2 + 0.3f * d3 + (1.0f - f) * s3;  d3 = s2;
-			s4 = s3 + 0.3f * d4 + (1.0f - f) * s4;  d4 = s3;
-			return s4;
-		}
-	};
-
-	void updateCoefs();
+	void updateCoefs();          // ALL four coefficients -- constructor only
 	static float clamp01(float x) { return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x); }
 	static float midiToFreq(uint8_t n) { return 440.0f * powf(2.0f, ((int)n - 69) / 12.0f); }
+	// one-pole coefficients from a time constant in seconds
+	static float decayCoefOf(float tau) { return expf(-1.0f / (tau * AUDIO_SAMPLE_RATE_EXACT)); }
+	static float lagCoefOf(float tau)   { return 1.0f - expf(-1.0f / (tau * AUDIO_SAMPLE_RATE_EXACT)); }
 
 	// parameters -- bare 32-bit aligned stores are atomic on Cortex-M7, so the
-	// float setters need no lock against the audio ISR
+	// float setters need no lock against the audio ISR.
+	//
+	// THE INVARIANT THAT MAKES THAT TRUE FOR DERIVED COEFFICIENTS: every setter
+	// writes at most ONE coefficient, so a preempting update() sees each one
+	// either wholly old or wholly new, and never a torn set. decay() and
+	// slideTime() therefore recompute a single coefficient inline instead of
+	// calling updateCoefs(), which writes all four and is CONSTRUCTOR-ONLY --
+	// at construction nothing can preempt it. If you add an attack()/release()
+	// setter, give it the same one-store discipline; do not reach for
+	// updateCoefs().
 	uint8_t waveform_  = 0;      // 0 = saw, 1 = square
 	float cutoff_      = 800.0f;
 	float resonance_   = 0.7f;
@@ -126,7 +142,7 @@ private:
 	float   filtEnv_ = 0.0f;
 	float   ampEnv_  = 0.0f;
 	float   lastOut_ = 0.0f;
-	Ladder  filter_;
+	AcidLadder filter_;
 };
 
 #endif
