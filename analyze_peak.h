@@ -34,6 +34,7 @@ class AudioAnalyzePeak : public AudioStream
 {
 public:
 	AudioAnalyzePeak(void) : AudioStream(1, inputQueueArray) {
+		new_output = false;
 		min_sample = 32767;
 		max_sample = -32768;
 	}
@@ -44,12 +45,35 @@ public:
 		__enable_irq();
 		return flag;
 	}
+	// read()/readPeakToPeak() CONSUME the accumulated min/max, so they must
+	// also clear new_output -- in the same critical section, or the clear is
+	// itself racy against update().
+	//
+	// ★ They did not, and the bug that exposed it is worth keeping. update()
+	// runs from the audio ISR, so it can land between a caller's available()
+	// and its read():
+	//
+	//     update()      -> data,     new_output = true
+	//     available()   -> true,     new_output = false
+	//     update()  [ISR] -> data,   new_output = true      <-- lands here
+	//     read()        -> returns the data, resets min/max, flag STAYS true
+	//     available()   -> true, with NO data behind it
+	//     read()        -> abs(-32768)/32767 == 1.0000305   <-- garbage
+	//
+	// The sentinel reads as a full-scale peak, so the failure looks like a
+	// signal-level problem rather than a flag problem, and it is timing
+	// dependent: it needs the ISR to fall inside that window. It surfaced as
+	// an intermittent red on rt1062:audio/audiooutput_i2s_test, whose sketch
+	// takes a running MAXIMUM over 500 ms -- one poisoned read outlives every
+	// correct one. Its steady-state readings in the same run were 0.5000: the
+	// audio path was fine throughout, only the sampling of it was not.
 	float read(void) {
 		__disable_irq();
 		int min = min_sample;
 		int max = max_sample;
 		min_sample = 32767;
 		max_sample = -32768;
+		new_output = false;
 		__enable_irq();
 		min = abs(min);
 		max = abs(max);
@@ -62,6 +86,7 @@ public:
 		int max = max_sample;
 		min_sample = 32767;
 		max_sample = -32768;
+		new_output = false;
 		__enable_irq();
 		return (float)(max - min) / 32767.0f;
 	}
