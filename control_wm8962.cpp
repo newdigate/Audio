@@ -203,3 +203,27 @@ bool AudioControlWM8962::enable(void)
 	}
 	return true;
 }
+
+// NEW-41: real headphone volume. begin()'s VOLUME table leaves LOUT1/ROUT1 at
+// 0x016B (VU | 0x6B = -14 dB, zero-cross off); enable() is unchanged and still
+// leaves that as the power-on level, so a sketch that never calls volume() sees
+// exactly the old behaviour.
+bool AudioControlWM8962::headphoneVolume(uint8_t v) {
+    // R2/R3 (LOUT1/ROUT1): bits 6:0 volume (0x00 = -121 dB .. 0x7F = +6 dB,
+    // 1 dB/step; 0x79 = 0 dB), bit 7 = OUT1ZC (zero-cross update), bit 8 = VU
+    // (latch both channels on the second write).  AVRCP's 0..127 maps linearly
+    // onto 0x2F..0x79 (-74 dB .. 0 dB): silent enough at 0, never above 0 dB.
+    //
+    // Those are the only bits in the register, and OUT1ZC is 0 in the value
+    // begin() writes, so these are plain writes -- there is no shadow copy to
+    // keep and nothing to read-modify-write.  (Writing R2 without VU then R3
+    // with VU is the WM8962 idiom for updating both channels in one step.)
+    uint16_t reg = (uint16_t)(0x2F + ((uint32_t)(v & 0x7F) * (0x79 - 0x2F)) / 127);
+    return codec.writeReg(0x02, reg) && codec.writeReg(0x03, (uint16_t)(0x0100 | reg));
+}
+
+bool AudioControlWM8962::volume(float n) {
+    if (n < 0) n = 0;
+    if (n > 1) n = 1;
+    return headphoneVolume((uint8_t)(n * 127.0f + 0.5f));
+}

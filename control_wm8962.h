@@ -42,7 +42,8 @@ class AudioControlWM8962 : public AudioControl
 public:
     bool enable(void);
     bool disable(void) { return true; }
-    bool volume(float n) { return true; }
+    bool volume(float n);   // 0.0..1.0 -> headphone (LOUT1/ROUT1) -121..+6 dB, both channels, with the VU latch
+    bool headphoneVolume(uint8_t v0_127);   // AVRCP absolute volume 0..127 -> the same registers
     bool inputLevel(float n) { return true; }
     bool inputSelect(int n) { return true; }
 private:
