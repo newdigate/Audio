@@ -30,6 +30,9 @@
 #if !defined(KINETISL)
 
 #include "memcpy_audio.h"
+#if defined(__IMXRT1176__)
+#include "I2S.h"   // core: audioPllConfigure() / audioPllTrimPpm()
+#endif
 
 
 // high-level explanation of how this I2S & DMA code works:
@@ -550,51 +553,28 @@ void AudioOutputI2S::config_i2s(bool only_bclk)
 	//   Clock root 64 = Audio PLL (mux 4) / 16, so the PLL post-div output must be
 	//   22.5792 MHz * 16 = 361.2672 MHz, hence VCO (pre postDiv-by-2) =
 	//   722.5344 MHz.  VCO/24MHz = 30.1056 = loopDiv + NUM/DENOM
-	//     -> loopDiv = 30, NUM = 1056, DENOM = 10000  (0.1056 exactly).
-	//   Check: 24 * (30 + 1056/10000) = 722.5344 MHz; /2 = 361.2672 MHz;
+	//     -> loopDiv = 30, fraction 0.1056 exactly.  The core's audioPllConfigure()
+	//        always programs DENOM = 1e6, so that is NUM = 105600 (the same ratio
+	//        this file used to spell 1056/10000; a 1e6 denominator is what gives
+	//        audioPllTrimPpm() a ~0.03 ppm step instead of ~30 ppm).
+	//   Check: 24 * (30 + 105600/1000000) = 722.5344 MHz; /2 = 361.2672 MHz;
 	//          /16 = 22.5792 MHz = 44100 * 512.  Zero error.
+	//   Trim:  d(num) = R = 30.1056 numerator counts per ppm (audioPllTrimPpm).
 	//   Frame-sync: BCLK = MCLK / (2*(TCR2_DIV+1)) = 22.5792M / 16 = 1.41120 MHz;
 	//               2 words/frame * 16 bits = 32 bit-clocks/frame;
 	//               1.41120 MHz / 32 = 44.1 kHz.  (== MCLK/512.)
 	// ---------------------------------------------------------------------
 
-	// One ANATOP AI indirect write to the Audio-PLL register file. Mirrors the
-	// core's file-static ai_write() (SDK ANATOP_AI_Write / QEMU imxrt_anadig:
-	// toggle bit8 -> done bit9). Replicated here because the core's helper is
-	// file-static in I2S.cpp.
-	auto ai_write_audio = [](uint8_t aiAddr, uint32_t wdata) {
-		uint32_t pre = ANADIG_MISC_AI_CTRL_AUDIO & ANADIG_AI_TOGGLE_DONE;
-		ANADIG_MISC_AI_CTRL_AUDIO &= ~ANADIG_AI_RWB;                          // write mode
-		ANADIG_MISC_AI_CTRL_AUDIO = (ANADIG_MISC_AI_CTRL_AUDIO & ~0xFFu) | aiAddr;
-		ANADIG_MISC_AI_WDATA_AUDIO = wdata;
-		ANADIG_MISC_AI_CTRL_AUDIO ^= ANADIG_AI_TOGGLE;                        // request
-		while ((ANADIG_MISC_AI_CTRL_AUDIO & ANADIG_AI_TOGGLE_DONE) == pre) { }
-	};
-
-	// Audio-PLL bring-up. AI sub-addresses (fsl_anatop_ai.h kAI_PLLAUDIO_*):
-	// CTRL0=0x00, CTRL0_SET=0x04, CTRL0_CLR=0x08, CTRL2(num)=0x20, CTRL3(denom)=0x30.
-	// CTRL0 bits: loopDiv[6:0], HOLD_RING_OFF b13, POWER_UP b14, ENABLE b15,
-	// BYPASS b16, PLL_REG_EN b22, POST_DIV[27:25].
-	ai_write_audio(0x04, (1u << 16));               // CTRL0_SET: BYPASS
-	ANADIG_PLL_AUDIO_CTRL |= ANADIG_PLL_AUDIO_CTRL_ENABLE_CLK;
-	ai_write_audio(0x30, 10000);                    // denominator  (44.1k: DENOM=10000)
-	ai_write_audio(0x20, 1056);                     // numerator    (44.1k: NUM=1056)
-	ai_write_audio(0x08, 0x7Fu);                    // CTRL0_CLR: clear loopDiv field
-	ai_write_audio(0x04, 30u & 0x7Fu);              // CTRL0_SET: loopDiv=30  (44.1k)
-	ai_write_audio(0x08, 0x7u << 25);               // CTRL0_CLR: clear postDiv field
-	ai_write_audio(0x04, (1u << 25));               // CTRL0_SET: postDiv=1 (divide by 2)
-	ai_write_audio(0x04, (1u << 22));               // CTRL0_SET: PLL_REG_EN
-	for (volatile uint32_t d = 20000; d; d--) { }   // >=100us settle
-	ai_write_audio(0x04, (1u << 14) | (1u << 13));  // CTRL0_SET: POWER_UP | HOLD_RING_OFF
-	for (volatile uint32_t d = 45000; d; d--) { }   // >=225us
-	ai_write_audio(0x08, (1u << 13));               // CTRL0_CLR: HOLD_RING_OFF
-	{
-		uint32_t guard = 2000000;
-		while (!(ANADIG_PLL_AUDIO_CTRL & ANADIG_PLL_AUDIO_CTRL_STABLE) && guard--) { }
-	}
-	ai_write_audio(0x04, (1u << 15));               // CTRL0_SET: ENABLE (clk out)
-	ANADIG_PLL_AUDIO_CTRL &= ~ANADIG_PLL_AUDIO_CTRL_GATE;  // ungate
-	ai_write_audio(0x08, (1u << 16));               // CTRL0_CLR: clear BYPASS
+	// Audio-PLL bring-up, through the core's single implementation
+	// (cores/imxrt1176 I2S.cpp audioPllConfigure): denominator FIXED at 1e6, so
+	// the fraction is named by its numerator alone and audioPllTrimPpm() knows
+	// what it is trimming.  105600/1e6 = 0.1056 -- the identical ratio this file
+	// used to program as NUM=1056/DENOM=10000, so the register writes and the
+	// resulting 361.2672 MHz are unchanged.  The AI sequence itself (bypass,
+	// num/denom, loopDiv, postDiv, PLL_REG_EN, settle, POWER_UP|HOLD_RING_OFF,
+	// settle, HOLD_RING_OFF clear, STABLE poll, ENABLE, ungate, un-bypass) lives
+	// there now instead of being duplicated here with its own copy of ai_write().
+	audioPllConfigure(30, 105600);
 
 	// SAI1 clock root 64: mux 4 (Audio PLL), div = 16 (value 15).
 	// 361.2672 MHz / 16 = 22.5792 MHz MCLK = 44100 * 512.

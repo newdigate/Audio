@@ -5,7 +5,7 @@
  *   - cores/imxrt1176/I2S.cpp (sai1_audio_pll_init + configureSAI + the
  *     16-word prefill / FCONT discipline, HW-verified 48 kHz),
  *   - Audio/output_i2s.cpp __IMXRT1176__ config_i2s (the 44.1 kHz Audio-PLL
- *     fractional divider: loopDiv=30, NUM=1056, DENOM=10000; HW-verified,
+ *     fractional divider: loopDiv=30, ratio 0.1056; HW-verified,
  *     audible on J101),
  *   - Audio/input_i2s.cpp __IMXRT1176__ begin (RX synchronous to TX,
  *     RDR0/TDR0 read/write at offset +0 low half-word per FBT=15 -- the
