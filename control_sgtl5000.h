@@ -30,6 +30,8 @@
 #include <AudioStream.h> // github.com/PaulStoffregen/cores/blob/master/teensy4/AudioStream.h
 #include "AudioControl.h"
 
+class TwoWire;
+
 // SGTL5000-specific defines for headphones
 #define AUDIO_HEADPHONE_DAC 0
 #define AUDIO_HEADPHONE_LINEIN 1
@@ -37,8 +39,12 @@
 class AudioControlSGTL5000 : public AudioControl
 {
 public:
-	AudioControlSGTL5000(void) : i2c_addr(0x0A) { }
+	// The control bus defaults to the board's codec I2C: Wire (LPI2C1) on
+	// every Teensy, Wire2 (LPI2C5) on Nosh -- see the constructor.
+	AudioControlSGTL5000(void);
 	void setAddress(uint8_t level);
+	// Talk to the codec over a different TwoWire. Call before enable().
+	void setWire(TwoWire &w) { bus = &w; }
 	bool enable(void);//For Teensy LC the SGTL acts as master, for all other Teensys as slave.
 	bool enable(const unsigned extMCLK, const uint32_t pllFreq = (4096.0l * AUDIO_SAMPLE_RATE_EXACT) ); //With extMCLK > 0, the SGTL acts as Master
 	bool disable(void) { return false; }
@@ -111,6 +117,7 @@ protected:
 	bool volumeInteger(unsigned int n); // range: 0x00 to 0x80
 	uint16_t ana_ctrl;
 	uint8_t i2c_addr;
+	TwoWire *bus;
 	unsigned char calcVol(float n, unsigned char range);
 	unsigned int read(unsigned int reg);
 	bool write(unsigned int reg, unsigned int val);

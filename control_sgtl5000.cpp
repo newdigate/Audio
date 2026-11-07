@@ -499,6 +499,21 @@
 #define SGTL5000_I2C_ADDR_CS_LOW	0x0A  // CTRL_ADR0_CS pin low (normal configuration)
 #define SGTL5000_I2C_ADDR_CS_HIGH	0x2A // CTRL_ADR0_CS  pin high
 
+// Which TwoWire reaches the codec. Every Teensy Audio Shield sits on Wire
+// (LPI2C1 on the i.MX RT). Nosh carries its SGTL5000 (QFN-20: I2C only, no
+// CTRL_ADR0_CS pin, address 0x0A) on LPI2C5 = Wire2, and LPI2C1's pads are not
+// an I2C bus there at all: GPIO_AD_08 is the USB2 ID input, so Wire.begin()
+// would mux it as SCL and every transfer would pull it low, which the VBUS
+// switch reads as an A-plug. setWire() overrides the default for other boards.
+AudioControlSGTL5000::AudioControlSGTL5000(void) : i2c_addr(SGTL5000_I2C_ADDR_CS_LOW),
+#if defined(ARDUINO_NOSH)
+	bus(&Wire2)
+#else
+	bus(&Wire)
+#endif
+{
+}
+
 
 void AudioControlSGTL5000::setAddress(uint8_t level)
 {
@@ -520,9 +535,9 @@ bool AudioControlSGTL5000::enable(void) {
 bool AudioControlSGTL5000::enable(const unsigned extMCLK, const uint32_t pllFreq)
 {
 
-	Wire.begin();
+	bus->begin();
 	delay(5);
-	
+
 	//Check if we are in Master Mode and if the Teensy had a reset:
 	unsigned int n = read(CHIP_I2S_CTRL);
 	if ( (extMCLK > 0) && (n == (0x0030 | (1<<7))) ) {
@@ -576,8 +591,19 @@ bool AudioControlSGTL5000::enable(const unsigned extMCLK, const uint32_t pllFreq
 		write(CHIP_I2S_CTRL, 0x0030 | (1<<7)); // SCLK=64*Fs, 16bit, I2S format
 	} else {
 		//SGTL is I2S Slave
+#if defined(__IMXRT1176__)
+		// This library's RT1176 SAI1 config (output_i2s.cpp) feeds the codec
+		// MCLK = 512*Fs (22.5792 MHz) and a frame of two 16-bit slots, so
+		// SCLK = 32*Fs -- not the Teensy 4's 256*Fs / 64*Fs. Both ratios have
+		// to be declared to a slave SGTL5000 (CHIP_CLK_CTRL MCLK_FREQ,
+		// CHIP_I2S_CTRL SCLKFREQ); 32*Fs is only legal with DLEN=16, which
+		// this is.
+		write(CHIP_CLK_CTRL, 0x0006);  // 44.1 kHz, 512*Fs
+		write(CHIP_I2S_CTRL, 0x0130); // SCLK=32*Fs, 16bit, I2S format
+#else
 		write(CHIP_CLK_CTRL, 0x0004);  // 44.1 kHz, 256*Fs
 		write(CHIP_I2S_CTRL, 0x0030); // SCLK=64*Fs, 16bit, I2S format
+#endif
 	}
 
 	// default signal routing is ok?
@@ -595,25 +621,25 @@ bool AudioControlSGTL5000::enable(const unsigned extMCLK, const uint32_t pllFreq
 unsigned int AudioControlSGTL5000::read(unsigned int reg)
 {
 	unsigned int val;
-	Wire.beginTransmission(i2c_addr);
-	Wire.write(reg >> 8);
-	Wire.write(reg);
-	if (Wire.endTransmission(false) != 0) return 0;
-	if (Wire.requestFrom((int)i2c_addr, 2) < 2) return 0;
-	val = Wire.read() << 8;
-	val |= Wire.read();
+	bus->beginTransmission(i2c_addr);
+	bus->write(reg >> 8);
+	bus->write(reg);
+	if (bus->endTransmission(false) != 0) return 0;
+	if (bus->requestFrom((int)i2c_addr, 2) < 2) return 0;
+	val = bus->read() << 8;
+	val |= bus->read();
 	return val;
 }
 
 bool AudioControlSGTL5000::write(unsigned int reg, unsigned int val)
 {
 	if (reg == CHIP_ANA_CTRL) ana_ctrl = val;
-	Wire.beginTransmission(i2c_addr);
-	Wire.write(reg >> 8);
-	Wire.write(reg);
-	Wire.write(val >> 8);
-	Wire.write(val);
-	if (Wire.endTransmission() == 0) return true;
+	bus->beginTransmission(i2c_addr);
+	bus->write(reg >> 8);
+	bus->write(reg);
+	bus->write(val >> 8);
+	bus->write(val);
+	if (bus->endTransmission() == 0) return true;
 	return false;
 }
 
