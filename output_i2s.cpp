@@ -574,6 +574,14 @@ void AudioOutputI2S::config_i2s(bool only_bclk)
 	// num/denom, loopDiv, postDiv, PLL_REG_EN, settle, POWER_UP|HOLD_RING_OFF,
 	// settle, HOLD_RING_OFF clear, STABLE poll, ENABLE, ungate, un-bypass) lives
 	// there now instead of being duplicated here with its own copy of ai_write().
+	// If the transmitter or receiver is already running, do nothing -- the same
+	// guard as the Teensy 4 (IMXRT1062) branch above. Without it, a sketch with
+	// both AudioOutputI2S and AudioInputI2S re-runs this from the second node's
+	// begin(): the TX soft reset below clears TCSR, so the output's FRDE is lost,
+	// its DMA never fires, and update_all() never runs (no audio blocks at all;
+	// seen on Nosh as TCSR=0x90170000, AudioMemoryUsage 0, record queues empty).
+	if ((SAI1_TCSR & SAI_TCSR_TE) != 0 || (SAI1_RCSR & SAI_RCSR_RE) != 0) return;
+
 	audioPllConfigure(30, 105600);
 
 	// SAI1 clock root 64: mux 4 (Audio PLL), div = 16 (value 15).
