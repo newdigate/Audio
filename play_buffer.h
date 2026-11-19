@@ -17,6 +17,9 @@
 class AudioPlayer : public AudioStream
 {
 public:
+	// Call every method from the main program (thread context), never from an
+	// interrupt handler: update() runs in the audio interrupt and these calls
+	// mask interrupts around it, which protects it from the main program only.
 	AudioPlayer(void);
 	// Interleaved 16-bit PCM, 1 or 2 channels (mono plays on both outputs).
 	// The memory is NOT owned or copied: it must stay valid until the next

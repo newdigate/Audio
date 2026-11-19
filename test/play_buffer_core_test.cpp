@@ -394,12 +394,27 @@ static void test_idle() {
     p.scratchEnd(); render(p, BLK); render(p, BLK); CHECK("idle again after scratchEnd while paused", p.isIdle());
 }
 
+// ---- Final review: play() before any frame has loaded ----
+static void test_play_before_frames() {
+    std::vector<int16_t> s(8000, 700);
+    AudioPlayerCore p; p.setSource(s.data(), 8000, 1, 44100); p.setAvailableFrames(0); p.setRate(1);
+    p.play();
+    CHECK("play() with a source but no frames yet is remembered", p.isPlaying());
+    Out o = render(p, 256);
+    CHECK("silent and still while nothing is loaded", all_zero(o.l) && p.position() == 0);
+    p.setAvailableFrames(4000);
+    Out q = render(p, 512);
+    CHECK("starts once frames arrive", p.position() > 200 && q.l[400] == 700);
+    AudioPlayerCore n; n.play();
+    CHECK("play() with no source is refused", !n.isPlaying());
+}
+
 int main() {
     test_interp(); test_unity(); test_half_rate(); test_reverse(); test_48k();
     test_ends(); test_starved(); test_paused(); test_resource(); test_tiny(); test_long();
     test_ramp(); test_ramp_no_step(); test_rate_zero(); test_play_pause_ramps();
     test_scratch_hold(); test_scratch_velocity(); test_scratch_limits(); test_scratch_smooth_and_end();
-    test_idle();
+    test_idle(); test_play_before_frames();
     if (g_fails) { std::printf("FAILED %d of %d checks\n", g_fails, g_checks); return 1; }
     std::printf("PASS (%d checks)\n", g_checks);
     return 0;

@@ -54,7 +54,7 @@ public:
     /* Rate changes, play() and pause() take effect as a linear ramp of the
      * step across the next render() block: no click, no slope jump. */
     void setRate(float rate) { rate_ = rate; }
-    void play() { if (avail_ > 0) playing_ = true; }
+    void play() { if (frames_ > 0) playing_ = true; }   /* with no frames loaded yet it waits, silent, for the first */
     void pause() { playing_ = false; }          /* isPlaying() is false at once; the ramp-down still renders */
     bool isPlaying() const { return playing_; }
     void seek(double frame)
