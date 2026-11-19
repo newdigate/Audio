@@ -379,11 +379,27 @@ static void test_scratch_smooth_and_end() {
     CHECK("scratch_end_resumes paused: stops", q.position() == c && !q.isPlaying());
 }
 
+// ---- Task 4: what the AudioStream wrapper needs ----
+static void test_idle() {
+    std::vector<int16_t> s(8000, 100);
+    AudioPlayerCore p;
+    CHECK("isIdle with no source", p.isIdle());
+    p.setSource(s.data(), 8000, 1, 44100);
+    CHECK("isIdle when paused", p.isIdle());
+    p.play(); CHECK("not idle when playing", !p.isIdle());
+    render(p, BLK); p.pause();
+    CHECK("not idle until the ramp-down block has been rendered", !p.isIdle());
+    render(p, BLK); CHECK("idle after the ramp-down block", p.isIdle());
+    p.scratchBegin(); CHECK("not idle when scratching", !p.isIdle());
+    p.scratchEnd(); render(p, BLK); render(p, BLK); CHECK("idle again after scratchEnd while paused", p.isIdle());
+}
+
 int main() {
     test_interp(); test_unity(); test_half_rate(); test_reverse(); test_48k();
     test_ends(); test_starved(); test_paused(); test_resource(); test_tiny(); test_long();
     test_ramp(); test_ramp_no_step(); test_rate_zero(); test_play_pause_ramps();
     test_scratch_hold(); test_scratch_velocity(); test_scratch_limits(); test_scratch_smooth_and_end();
+    test_idle();
     if (g_fails) { std::printf("FAILED %d of %d checks\n", g_fails, g_checks); return 1; }
     std::printf("PASS (%d checks)\n", g_checks);
     return 0;

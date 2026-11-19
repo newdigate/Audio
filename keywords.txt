@@ -72,6 +72,7 @@ AudioAmplifier	KEYWORD2
 AudioOutputAnalog	KEYWORD2
 AudioOutputAnalogStereo	KEYWORD2
 AudioPlayMemory	KEYWORD2
+AudioPlayer	KEYWORD2
 AudioPlaySdRaw	KEYWORD2
 AudioPlaySdWav	KEYWORD2
 AudioPlayQueue	KEYWORD2

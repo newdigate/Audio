@@ -97,6 +97,8 @@ public:
     }
     void scratchEnd() { scratching_ = false; }
     bool isScratching() const { return scratching_; }
+    /* Nothing to render: paused, not scratching, and any ramp-down finished. */
+    bool isIdle() const { return !playing_ && !scratching_ && step_ == 0; }
 
     double   position() const { return (double)pos_ / 4294967296.0; }
     uint32_t lengthFrames() const { return frames_; }
