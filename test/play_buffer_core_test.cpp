@@ -1,0 +1,188 @@
+// Host tests for play_buffer_core.h (AudioPlayerCore): the in-memory
+// variable-rate player behind AudioPlayer. No Arduino, no audio hardware.
+//
+//   c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I. \
+//       -o /tmp/pbc test/play_buffer_core_test.cpp && /tmp/pbc
+//
+// Expected: every check prints nothing, the last line is "PASS (<n> checks)",
+// exit 0, and no sanitizer report.
+#include "play_buffer_core.h"
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
+static int g_checks = 0, g_fails = 0;
+#define CHECK(name, cond) do { g_checks++; if (!(cond)) { g_fails++; \
+    std::printf("FAIL %s  (%s:%d: %s)\n", name, __FILE__, __LINE__, #cond); } } while (0)
+
+static const uint32_t BLK = 128;
+struct Out { std::vector<int16_t> l, r; };
+static Out render(AudioPlayerCore &p, uint32_t n) {
+    Out o; o.l.resize(n); o.r.resize(n);
+    for (uint32_t i = 0; i < n; i += BLK) {
+        uint32_t k = (n - i < BLK) ? n - i : BLK;
+        p.render(o.l.data() + i, o.r.data() + i, k);
+    }
+    return o;
+}
+static bool all_zero(const std::vector<int16_t> &v, size_t from = 0) {
+    for (size_t i = from; i < v.size(); i++) if (v[i] != 0) return false;
+    return true;
+}
+
+static void test_interp() {
+    CHECK("interp_endpoints t=0", audioplayer_interp4(100, 200, 300, 400, 0.0f) == 200);
+    CHECK("interp_endpoints t~1", std::abs(audioplayer_interp4(100, 200, 300, 400, 0.999f) - 300) <= 2);
+    auto poly = [](double x) { return x * x * x - 20 * x * x + 5 * x; };
+    int16_t y = audioplayer_interp4((int16_t)poly(10), (int16_t)poly(11), (int16_t)poly(12), (int16_t)poly(13), 0.5f);
+    CHECK("interp_cubic_exact", std::abs(y - (int)std::lround(poly(11.5))) <= 1);
+    int16_t hi = audioplayer_interp4(-32768, 32767, 32767, -32768, 0.5f);   // overshoots above full scale
+    int16_t lo = audioplayer_interp4(32767, -32768, -32768, 32767, 0.5f);
+    CHECK("interp_saturates high", hi == 32767);
+    CHECK("interp_saturates low", lo == -32768);
+}
+
+// Stereo source: L[i] = i (wraps as int16 past 32767), R[i] = -i.
+static std::vector<int16_t> stereo_ramp(uint32_t frames) {
+    std::vector<int16_t> s(frames * 2);
+    for (uint32_t i = 0; i < frames; i++) { s[2 * i] = (int16_t)i; s[2 * i + 1] = (int16_t)(-(int32_t)i); }
+    return s;
+}
+
+static void test_unity() {
+    auto s = stereo_ramp(4096);
+    AudioPlayerCore p; p.setSource(s.data(), 4096, 2, 44100); p.setRate(1); p.play();
+    render(p, BLK);                                   // settling block
+    double p0 = p.position();
+    CHECK("unity settled on a whole frame", p0 == std::floor(p0) && p0 > 0);
+    Out o = render(p, 1024);
+    bool ok = true;
+    for (int i = 0; i < 1024; i++) ok = ok && o.l[i] == (int16_t)(p0 + i) && o.r[i] == (int16_t)(-(p0 + i));
+    CHECK("unity_rate_is_identity", ok);
+    CHECK("unity position", p.position() == p0 + 1024);
+}
+
+static void test_half_rate() {
+    std::vector<int16_t> s(3000);
+    for (int i = 0; i < 3000; i++) s[i] = (int16_t)(10 * i);
+    AudioPlayerCore p; p.setSource(s.data(), 3000, 1, 44100); p.setRate(0.5f); p.play();
+    render(p, BLK);
+    double p0 = p.position();
+    Out o = render(p, 512);
+    bool ok = true, same = true;
+    for (int i = 0; i < 512; i++) {
+        ok = ok && std::abs(o.l[i] - (10.0 * (p0 + 0.5 * i))) <= 1.0;
+        same = same && o.l[i] == o.r[i];
+    }
+    CHECK("half_rate slope", ok);
+    CHECK("half_rate mono on both outputs", same);
+}
+
+static void test_reverse() {
+    auto s = stereo_ramp(4096);
+    AudioPlayerCore p; p.setSource(s.data(), 4096, 2, 44100); p.seek(2000); p.setRate(-1); p.play();
+    render(p, BLK);
+    Out o = render(p, 512);
+    bool ok = true;
+    for (int i = 1; i < 512; i++) ok = ok && (o.l[i] - o.l[i - 1] == -1);
+    CHECK("reverse descends by 1", ok);
+    CHECK("reverse position below start point", p.position() < 2000 - 512);
+}
+
+static void test_48k() {
+    std::vector<int16_t> s(60000, 0);
+    AudioPlayerCore p; p.setSource(s.data(), 60000, 1, 48000); p.setRate(1); p.play();
+    render(p, BLK);
+    double p0 = p.position();
+    render(p, 44100);
+    CHECK("source_rate_48k", std::fabs((p.position() - p0) - 48000.0) <= 1.0);
+}
+
+static void test_ends() {
+    std::vector<int16_t> s(1000, 1000);
+    AudioPlayerCore p; p.setSource(s.data(), 1000, 1, 44100); p.setRate(1); p.play();
+    Out o = render(p, 2048);
+    CHECK("stops_at_end not playing", !p.isPlaying());
+    CHECK("stops_at_end position", p.position() == 999);
+    CHECK("stops_at_end silence after", all_zero(o.l, 1200) && all_zero(o.r, 1200));
+    CHECK("stops_at_end played something", o.l[300] == 1000);
+
+    AudioPlayerCore q; q.setSource(s.data(), 1000, 1, 44100); q.seek(500); q.setRate(-1); q.play();
+    Out r = render(q, 2048);
+    CHECK("stops_at_start_in_reverse not playing", !q.isPlaying());
+    CHECK("stops_at_start_in_reverse position", q.position() == 0);
+    CHECK("stops_at_start_in_reverse silence after", all_zero(r.l, 800));
+}
+
+static void test_starved() {
+    std::vector<int16_t> s(4000, 500);
+    AudioPlayerCore p; p.setSource(s.data(), 4000, 1, 44100); p.setAvailableFrames(1000); p.setRate(1); p.play();
+    Out o = render(p, 2048);
+    CHECK("starved_holds still playing", p.isPlaying());
+    CHECK("starved_holds position", p.position() <= 999 && p.position() >= 990);
+    CHECK("starved_holds silent tail", all_zero(o.l, 1200));
+    p.setAvailableFrames(4000);
+    double before = p.position();
+    render(p, BLK);
+    CHECK("starved_holds resumes", p.position() > before + 100);
+}
+
+static void test_paused() {
+    std::vector<int16_t> s(4000, 500);
+    AudioPlayerCore p; p.setSource(s.data(), 4000, 1, 44100); p.setRate(1); p.play();
+    render(p, 256); p.pause(); render(p, 256);       // let the pause take effect
+    double pos = p.position();
+    Out o = render(p, 512);
+    CHECK("paused_is_silent zeros", all_zero(o.l) && all_zero(o.r));
+    CHECK("paused_is_silent position", p.position() == pos);
+    CHECK("paused_is_silent flag", !p.isPlaying());
+}
+
+static void test_resource() {
+    std::vector<int16_t> a(4000, 500), b(4000, 700);
+    AudioPlayerCore p; p.setSource(a.data(), 4000, 1, 44100); p.setRate(1); p.play();
+    render(p, 256);
+    p.setSource(b.data(), 4000, 1, 44100);
+    Out o = render(p, 256);
+    CHECK("resource_while_playing silent", all_zero(o.l));
+    CHECK("resource_while_playing position 0", p.position() == 0 && !p.isPlaying());
+    p.play(); render(p, 256);
+    p.setAvailableFrames(0);
+    double pos = p.position();
+    Out z = render(p, 256);
+    CHECK("available 0 while playing: silent", all_zero(z.l));
+    CHECK("available 0 while playing: holds", p.position() <= pos);
+}
+
+static void test_tiny() {
+    int16_t z[8] = {0};
+    for (uint32_t frames : {0u, 1u, 3u}) {
+        AudioPlayerCore p; p.setSource(frames ? z : nullptr, frames, 2, 44100); p.setRate(1); p.play();
+        Out o = render(p, 256);
+        CHECK("tiny_buffers zeros", all_zero(o.l) && all_zero(o.r));
+        CHECK("tiny_buffers stopped", !p.isPlaying());
+        AudioPlayerCore q; q.setSource(frames ? z : nullptr, frames, 2, 44100); q.setRate(-1); q.play();
+        render(q, 256);
+        CHECK("tiny_buffers reverse stopped", !q.isPlaying());
+    }
+}
+
+static void test_long() {
+    const uint32_t frames = 24000000;
+    int16_t *s = (int16_t *)std::calloc(frames, sizeof(int16_t));
+    AudioPlayerCore p; p.setSource(s, frames, 1, 44100); p.seek(23000000); p.setRate(0.01f); p.play();
+    render(p, BLK);
+    double p0 = p.position();
+    render(p, 44100);
+    CHECK("long_buffer_precision", std::fabs((p.position() - p0) - 441.0) <= 1.0);
+    std::free(s);
+}
+
+int main() {
+    test_interp(); test_unity(); test_half_rate(); test_reverse(); test_48k();
+    test_ends(); test_starved(); test_paused(); test_resource(); test_tiny(); test_long();
+    if (g_fails) { std::printf("FAILED %d of %d checks\n", g_fails, g_checks); return 1; }
+    std::printf("PASS (%d checks)\n", g_checks);
+    return 0;
+}
