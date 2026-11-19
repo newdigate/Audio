@@ -179,9 +179,83 @@ static void test_long() {
     std::free(s);
 }
 
+
+// ---- Task 2: rate changes ramp across the block ----
+static std::vector<int16_t> sine(uint32_t frames, double hz, double amp) {
+    std::vector<int16_t> s(frames);
+    for (uint32_t i = 0; i < frames; i++) s[i] = (int16_t)std::lround(amp * std::sin(2.0 * M_PI * hz * i / 44100.0));
+    return s;
+}
+static int max_delta(const std::vector<int16_t> &v) {
+    int m = 0;
+    for (size_t i = 1; i < v.size(); i++) { int d = std::abs(v[i] - v[i - 1]); if (d > m) m = d; }
+    return m;
+}
+static const double SINE_MAX_DELTA = 20000.0 * 2.0 * M_PI * 441.0 / 44100.0;   // per sample at rate 1
+
+static void test_ramp() {
+    std::vector<int16_t> s(20000, 0);
+    AudioPlayerCore p; p.setSource(s.data(), 20000, 1, 44100); p.setRate(1); p.play();
+    render(p, 2 * BLK);
+    double p0 = p.position();
+    p.setRate(2); render(p, BLK);
+    CHECK("ramp_position ramp block", std::fabs((p.position() - p0) - 128 * 1.5) <= 1.0);
+    double p1 = p.position();
+    render(p, BLK);
+    CHECK("ramp_position next block", std::fabs((p.position() - p1) - 256.0) <= 1.0);
+}
+
+static void test_ramp_no_step() {
+    auto s = sine(16000, 441.0, 20000.0);
+    AudioPlayerCore p; p.setSource(s.data(), 16000, 1, 44100); p.seek(8000); p.setRate(1); p.play();
+    std::vector<int16_t> all;
+    for (float r : {1.0f, 0.5f, -1.0f, 1.0f, 0.25f, -0.5f, 1.0f}) {
+        p.setRate(r);
+        Out o = render(p, BLK);
+        all.insert(all.end(), o.l.begin(), o.l.end());
+    }
+    CHECK("ramp_no_step", max_delta(all) < 1.2 * SINE_MAX_DELTA);
+    CHECK("ramp_no_step made sound", max_delta(all) > 100);
+}
+
+static void test_rate_zero() {
+    auto s = sine(16000, 441.0, 20000.0);
+    AudioPlayerCore p; p.setSource(s.data(), 16000, 1, 44100); p.seek(8000); p.setRate(1); p.play();
+    render(p, 2 * BLK);
+    p.setRate(0); render(p, BLK);
+    double pos = p.position();
+    Out o = render(p, 256);
+    bool constant = true;
+    for (int i = 1; i < 256; i++) constant = constant && o.l[i] == o.l[0];
+    CHECK("rate_zero_holds constant", constant);
+    CHECK("rate_zero_holds value", std::abs(o.l[0] - (int)std::lround(20000.0 * std::sin(2.0 * M_PI * 441.0 * pos / 44100.0))) <= 2);
+    CHECK("rate_zero_holds position", p.position() == pos);
+    CHECK("rate_zero_holds still playing", p.isPlaying());
+}
+
+static void test_play_pause_ramps() {
+    auto s = sine(16000, 441.0, 20000.0);
+    AudioPlayerCore p; p.setSource(s.data(), 16000, 1, 44100); p.seek(8000); p.setRate(1);
+    p.play();
+    Out a = render(p, BLK);
+    CHECK("play_from_pause_ramps first block", std::fabs((p.position() - 8000.0) - 64.0) <= 1.0);
+    render(p, BLK);
+    double p1 = p.position();
+    p.pause();
+    CHECK("pause: isPlaying false at once", !p.isPlaying());
+    Out b = render(p, BLK);
+    CHECK("pause ramps down over one block", std::fabs((p.position() - p1) - 64.0) <= 1.0);
+    CHECK("pause block is not cut to silence", max_delta(b.l) > 0 && max_delta(b.l) < 1.2 * SINE_MAX_DELTA);
+    double p2 = p.position();
+    Out c = render(p, BLK);
+    CHECK("after the pause block: silent and still", all_zero(c.l) && p.position() == p2);
+    (void)a;
+}
+
 int main() {
     test_interp(); test_unity(); test_half_rate(); test_reverse(); test_48k();
     test_ends(); test_starved(); test_paused(); test_resource(); test_tiny(); test_long();
+    test_ramp(); test_ramp_no_step(); test_rate_zero(); test_play_pause_ramps();
     if (g_fails) { std::printf("FAILED %d of %d checks\n", g_fails, g_checks); return 1; }
     std::printf("PASS (%d checks)\n", g_checks);
     return 0;

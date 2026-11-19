@@ -44,13 +44,16 @@ public:
         ch_ = (channels == 1) ? 1 : 2;
         srcRate_ = sampleRate > 0.0f ? sampleRate : outRate_;
         pos_ = 0;
+        step_ = 0;
         playing_ = false;
         starved_ = false;
     }
     void setAvailableFrames(uint32_t n) { avail_ = n < frames_ ? n : frames_; }
+    /* Rate changes, play() and pause() take effect as a linear ramp of the
+     * step across the next render() block: no click, no slope jump. */
     void setRate(float rate) { rate_ = rate; }
     void play() { if (avail_ > 0) playing_ = true; }
-    void pause() { playing_ = false; }
+    void pause() { playing_ = false; }          /* isPlaying() is false at once; the ramp-down still renders */
     bool isPlaying() const { return playing_; }
     void seek(double frame)
     {
@@ -67,11 +70,18 @@ public:
     /* Always writes n samples to both outputs. */
     void render(int16_t *left, int16_t *right, uint32_t n)
     {
-        const int64_t step = stepFor(rate_);
+        /* Ramp from the current step to the target over this block.  Sample i
+         * uses the step at the middle of its interval, so the block advances
+         * exactly n * (start + target) / 2. */
+        const int64_t start = step_;
+        const int64_t target = playing_ ? stepFor(rate_) : 0;
+        const int64_t delta = target - start;
+        bool moving = playing_ || start != 0;
         for (uint32_t i = 0; i < n; i++) {
             left[i] = 0;
             right[i] = 0;
-            if (!playing_ || avail_ == 0) continue;
+            if (!moving || avail_ == 0) continue;
+            const int64_t step = start + (delta * (int64_t)(2 * i + 1)) / (int64_t)(2 * n);
             const int64_t next = pos_ + step;
             if (starved_) {
                 if (step > 0 && (next >> 32) >= (int64_t)avail_) continue;
@@ -81,10 +91,12 @@ public:
             if (next < 0) {                                   /* ran off the start */
                 pos_ = 0;
                 playing_ = false;
+                moving = false;
             } else if ((next >> 32) >= (int64_t)avail_) {
                 if (avail_ >= frames_) {                      /* the real end */
                     pos_ = (int64_t)(frames_ - 1) << 32;
                     playing_ = false;
+                    moving = false;
                 } else {
                     starved_ = true;                          /* load has not got here yet: hold */
                 }
@@ -92,6 +104,7 @@ public:
                 pos_ = next;
             }
         }
+        step_ = moving ? target : 0;
     }
 
 private:
@@ -124,6 +137,7 @@ private:
     uint8_t  ch_ = 2;
     float    srcRate_ = 44100.0f, outRate_ = 44100.0f;
     int64_t  pos_ = 0;                 /* Q32.32 source frames */
+    int64_t  step_ = 0;                /* Q32.32 frames per output sample, as left by the last block */
     float    rate_ = 1.0f;
     bool     playing_ = false, starved_ = false;
 };
