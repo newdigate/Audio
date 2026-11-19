@@ -252,10 +252,138 @@ static void test_play_pause_ramps() {
     (void)a;
 }
 
+// ---- Task 3: scratch mode ----
+// Renders `ms` of output in 128-sample blocks, calling scratchTo(target(t))
+// every 441 samples (a 100 Hz touch panel).  Records per-block positions.
+template <typename F>
+static std::vector<double> scratch_run(AudioPlayerCore &p, F target, int ms, std::vector<int16_t> *audio = nullptr,
+                                       double *t0 = nullptr) {
+    static double clock = 0;                        // output samples since the run began
+    if (t0) clock = *t0;
+    std::vector<double> pos;
+    const uint32_t total = (uint32_t)(ms * 44.1);
+    uint32_t since = 441;
+    for (uint32_t done = 0; done < total; done += BLK) {
+        if (since >= 441) { p.scratchTo(target(clock), (float)since); since = 0; }
+        int16_t l[BLK], r[BLK];
+        p.render(l, r, BLK);
+        if (audio) audio->insert(audio->end(), l, l + BLK);
+        since += BLK; clock += BLK;
+        pos.push_back(p.position());
+    }
+    if (t0) *t0 = clock;
+    return pos;
+}
+static AudioPlayerCore scratch_setup(const std::vector<int16_t> &s, double at) {
+    AudioPlayerCore p; p.setSource(s.data(), (uint32_t)s.size(), 1, 44100); p.seek(at); p.setRate(1); p.play();
+    int16_t l[BLK], r[BLK];
+    p.render(l, r, BLK); p.render(l, r, BLK);
+    return p;
+}
+
+static void test_scratch_hold() {
+    auto s = sine(200000, 441.0, 20000.0);
+    AudioPlayerCore p = scratch_setup(s, 100000);
+    const double P = p.position() - 2000;
+    p.scratchBegin();
+    CHECK("isScratching", p.isScratching());
+    double t = 0;
+    scratch_run(p, [&](double) { return P; }, 150, nullptr, &t);
+    CHECK("scratch_hold_converges", std::fabs(p.position() - P) < 1.0);
+    std::vector<int16_t> a;
+    scratch_run(p, [&](double) { return P; }, 100, &a, &t);
+    CHECK("scratch_hold_converges then constant", max_delta(a) <= 1);
+    CHECK("scratch_hold stays put", std::fabs(p.position() - P) < 1.0);
+}
+
+static void test_scratch_velocity() {
+    auto s = sine(400000, 441.0, 20000.0);
+    for (double v : {1.0, -2.0, 0.25}) {
+        AudioPlayerCore p = scratch_setup(s, 200000);
+        const double start = p.position();
+        p.scratchBegin();
+        double t = 0;
+        auto f = [&](double tt) { return start + v * tt; };
+        scratch_run(p, f, 150, nullptr, &t);
+        double a = p.position();
+        auto pos = scratch_run(p, f, 100, nullptr, &t);
+        double mean = (pos.back() - a) / (pos.size() * (double)BLK);
+        CHECK("scratch_follows_velocity mean", std::fabs(mean - v) <= 0.03 * std::fabs(v));
+        bool ripple_ok = true; double prev = a;
+        for (double q : pos) { double r = (q - prev) / BLK; prev = q; ripple_ok = ripple_ok && std::fabs(r - v) <= 0.10 * std::fabs(v); }
+        CHECK("scratch_follows_velocity no stepping at the touch rate", ripple_ok);
+    }
+}
+
+static void test_scratch_limits() {
+    auto s = sine(400000, 441.0, 20000.0);
+    {   // step and hold: no overshoot
+        AudioPlayerCore p = scratch_setup(s, 100000);
+        const double T = p.position() + 5000;
+        p.scratchBegin();
+        double t = 0; bool ok = true;
+        for (double q : scratch_run(p, [&](double) { return T; }, 400, nullptr, &t)) ok = ok && q <= T + 5.0;   /* 0.1 % of the 5000-frame jump */
+        CHECK("scratch_no_overshoot", ok);
+        CHECK("scratch_no_overshoot arrives", std::fabs(p.position() - T) < 1.0);
+    }
+    {   // far target: rate limited to 8 frames per sample
+        std::vector<int16_t> big(3000000, 0);
+        AudioPlayerCore p = scratch_setup(big, 1000);
+        p.scratchBegin();
+        double t = 0, prev = p.position(); bool ok = true, fast = false;
+        for (double q : scratch_run(p, [&](double) { return 2001000.0; }, 300, nullptr, &t)) {
+            ok = ok && (q - prev) <= 8.0 * BLK + 1.0; fast = fast || (q - prev) > 7.5 * BLK; prev = q;
+        }
+        CHECK("scratch_rate_limit", ok);
+        CHECK("scratch_rate_limit reaches the limit", fast);
+    }
+    {   // clamped to what is loaded
+        AudioPlayerCore p = scratch_setup(s, 500);
+        p.setAvailableFrames(1000);
+        p.scratchBegin();
+        double t = 0; bool ok = true;
+        for (double q : scratch_run(p, [&](double) { return 50000.0; }, 300, nullptr, &t)) ok = ok && q <= 999.0;
+        CHECK("scratch_clamped high", ok && p.position() > 990.0);
+        for (double q : scratch_run(p, [&](double) { return -10.0; }, 300, nullptr, &t)) ok = ok && q >= 0.0;
+        CHECK("scratch_clamped low", ok && p.position() < 1.0);
+        CHECK("scratch at the ends does not stop playback intent", p.isPlaying());
+    }
+}
+
+static void test_scratch_smooth_and_end() {
+    auto s = sine(400000, 441.0, 20000.0);
+    AudioPlayerCore p = scratch_setup(s, 200000);
+    p.setRate(0.92f);
+    int16_t l[BLK], r[BLK]; p.render(l, r, BLK);
+    const double start = p.position();
+    std::vector<int16_t> a;
+    p.scratchBegin();
+    double t = 0, peak = 1.0, prev = start;
+    // back at 3x, forward at 2x, hold: stair-stepped at 100 Hz by scratch_run
+    auto f = [&](double tt) { double ms = tt / 44.1; return ms < 120 ? start - 3.0 * tt : ms < 300 ? start - 3.0 * 5292 + 2.0 * (tt - 5292) : start - 3.0 * 5292 + 2.0 * (13230 - 5292); };
+    for (double q : scratch_run(p, f, 400, &a, &t)) { peak = std::fmax(peak, std::fabs(q - prev) / BLK); prev = q; }
+    p.scratchEnd();
+    CHECK("scratchEnd clears isScratching", !p.isScratching());
+    for (int i = 0; i < 2; i++) { p.render(l, r, BLK); a.insert(a.end(), l, l + BLK); }
+    CHECK("scratch_smooth", max_delta(a) < 1.5 * peak * SINE_MAX_DELTA);
+    CHECK("scratch_smooth moved fast", peak > 2.5);
+    double b = p.position(); p.render(l, r, BLK);
+    CHECK("scratch_end_resumes at the set rate", std::fabs((p.position() - b) / BLK - 0.92) <= 0.001);
+
+    AudioPlayerCore q; q.setSource(s.data(), (uint32_t)s.size(), 1, 44100); q.seek(100000);   // paused
+    q.scratchBegin(); double t2 = 0;
+    scratch_run(q, [&](double tt) { return 100000.0 + tt; }, 200, nullptr, &t2);
+    CHECK("scratch from paused moves", q.position() > 100000.0 + 5000);
+    q.scratchEnd();
+    q.render(l, r, BLK); double c = q.position(); q.render(l, r, BLK);
+    CHECK("scratch_end_resumes paused: stops", q.position() == c && !q.isPlaying());
+}
+
 int main() {
     test_interp(); test_unity(); test_half_rate(); test_reverse(); test_48k();
     test_ends(); test_starved(); test_paused(); test_resource(); test_tiny(); test_long();
     test_ramp(); test_ramp_no_step(); test_rate_zero(); test_play_pause_ramps();
+    test_scratch_hold(); test_scratch_velocity(); test_scratch_limits(); test_scratch_smooth_and_end();
     if (g_fails) { std::printf("FAILED %d of %d checks\n", g_fails, g_checks); return 1; }
     std::printf("PASS (%d checks)\n", g_checks);
     return 0;
